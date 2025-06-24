@@ -1,0 +1,84 @@
+num_configs: 200000
+# seed: 2, 6, 9, 15, 16 (use with mcr-roadmap heuristic), 18 # goal covering: 5, 7, 12, 17, 19, 20
+seed: 1
+config_dir: 'resources/input_files/custom_walled_envs/jun22/random_start_random_goal_single_obstacle_room_2_200k'
+output_dir: 'resources/models/custom_walled_envs/jun22/random_start_random_goal_single_obstacle_room_2_200k_halfrad'
+
+one_env: false
+wall:
+  thickness: 0.05
+  color: [0.8, 0.8, 0.8, 1]
+  condim: 4
+
+obstacles:
+  count:
+    min: 1  # Minimum total obstacles
+    max: 3 # Maximum total obstacles
+  movable_probability: 1.0  # Probability of an obstacle being movable (0-1)
+  
+  # Common obstacle configurations
+  size:
+    width:
+      min: 0.2
+      max: 0.8
+    depth:
+      min: 0.2
+      max: 0.8
+  movable_mass: 0.1
+  color:
+    movable: [1, 1, 0, 1]
+    static: [1, 0, 0, 1]
+  friction: [0.0, 0.005, 0.001]
+
+env_size:
+  width: # corridor width
+    min: 2
+    max: 4
+  depth:
+    min: 2
+    max: 4
+  height:
+    min: 2
+    max: 2
+
+robot:
+  placement_strategy: 'random' # Options: 'fixed', 'random'
+  pos: [-2.75, -2.75, 0.2]
+  type: 'sphere' # Options: 'sphere', 'box'
+  size: [0.15, 0.15, 0.15]
+  mass: 5.0
+  color: [1.0, 1.0, 0.0, 1.0]
+  friction: [1.0, 0.005, 0.0001]
+
+goal:
+  placement_strategy: 'random' # Options: 'fixed', 'random'
+  pos: [2.5, 2.5, 0.0]
+  size: [0.25, 0.25, 0.25]
+  color: [0, 1, 0, 0.5]
+  name: 'goal'
+
+floor:
+  friction: [0.5, 0.005, 0.001]
+  size: [0, 0, 0.05]
+
+light:
+  pos: [0, 0, 1.5]
+  dir: [0, 0, -1]
+
+skybox:
+  rgb1: [0.3, 0.5, 0.7]
+  rgb2: [0, 0, 0]
+  width: 512
+  height: 3072
+
+groundplane:
+  rgb1: [0.2, 0.3, 0.4]
+  rgb2: [0.1, 0.2, 0.3]
+  markrgb: [0.8, 0.8, 0.8]
+  width: 300
+  height: 300
+  texrepeat: [5, 5]
+  reflectance: 0.2
+
+# Coarser wave-front / occupancy-grid resolution (metres per cell)
+wavefront_resolution: 0.03  # was 0.03 – coarser grid is ~4× faster
