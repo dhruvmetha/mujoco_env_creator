@@ -6,6 +6,8 @@ import argparse
 from tqdm import tqdm
 from typing import Dict, Any, List
 import numpy as np
+import multiprocessing as mp
+from functools import partial
 
 np.random.seed(42)
 
@@ -237,9 +239,24 @@ def save_mujoco_xml(xml_str: str, filename: str) -> None:
     with open(filename, 'w') as f:
         f.write(xml_str)
 
+def process_single_config(config_file: str, config_dir: str, output_dir: str) -> tuple:
+    """Process a single config file and return status"""
+    try:
+        config_path = os.path.join(config_dir, config_file)
+        config = load_config(config_path)
+        mujoco_xml = create_mujoco_xml(config)
+        output_file = os.path.join(output_dir, f"{os.path.splitext(config_file)[0]}.xml")
+        save_mujoco_xml(mujoco_xml, output_file)
+        # Remove the config file after successful creation of XML
+        os.remove(config_path)
+        return (config_file, True, None)
+    except Exception as e:
+        return (config_file, False, str(e))
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='executables/mujoco_env_creator/generator_config.yaml')
+    parser.add_argument('--processes', type=int, default=None, help='Number of processes to use (default: CPU count)')
     args = parser.parse_args()
     return args
 
@@ -248,6 +265,10 @@ if __name__ == "__main__":
     generator_config = load_generator_config(args.config)
     config_dir = generator_config.get('config_dir', 'env_configs')
     output_dir = generator_config.get('output_dir', 'mujoco_envs')
+    
+    # Determine number of processes
+    num_processes = args.processes if args.processes else mp.cpu_count()
+    print(f"Using {num_processes} processes")
     
     # Clear out existing XML files
     if os.path.exists(output_dir):
@@ -259,15 +280,34 @@ if __name__ == "__main__":
 
     config_files = [f for f in os.listdir(config_dir) if f.endswith('.yaml')]
     
-    for config_file in tqdm(config_files, desc="Generating MuJoCo XML files"):
-        config_path = os.path.join(config_dir, config_file)
-        config = load_config(config_path)
-        mujoco_xml = create_mujoco_xml(config)
-        output_file = os.path.join(output_dir, f"{os.path.splitext(config_file)[0]}.xml")
-        save_mujoco_xml(mujoco_xml, output_file)
-        # Remove the config file after successful creation of XML
-        os.remove(config_path)
-        # except Exception as e:
-        #     print(f"Error processing {config_file}: {e}")
-
+    if not config_files:
+        print("No config files found to process")
+        exit(0)
+    
+    # Create partial function with fixed arguments
+    process_func = partial(process_single_config, config_dir=config_dir, output_dir=output_dir)
+    
+    # Use multiprocessing with progress bar
+    successful_count = 0
+    failed_count = 0
+    
+    with mp.Pool(processes=num_processes) as pool:
+        # Use imap for progress tracking
+        results = list(tqdm(
+            pool.imap(process_func, config_files),
+            total=len(config_files),
+            desc="Generating MuJoCo XML files"
+        ))
+    
+    # Process results
+    for config_file, success, error in results:
+        if success:
+            successful_count += 1
+        else:
+            failed_count += 1
+            print(f"Error processing {config_file}: {error}")
+    
     print(f"MuJoCo XML files generated and saved in the '{output_dir}' directory")
+    print(f"Successfully processed: {successful_count} files")
+    if failed_count > 0:
+        print(f"Failed to process: {failed_count} files")
