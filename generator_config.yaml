@@ -1,4 +1,4 @@
-num_configs: 200000
+num_configs: 1000
 # seed: 2, 6, 9, 15, 16 (use with mcr-roadmap heuristic), 18 # goal covering: 5, 7, 12, 17, 19, 20
 seed: 1
 config_dir: 'resources/input_files/custom_walled_envs/jun22/random_start_random_goal_single_obstacle_room_2_200k'
@@ -79,6 +79,8 @@ groundplane:
   height: 300
   texrepeat: [5, 5]
   reflectance: 0.2
+
+enable_connectivity_check: true
 
 # Coarser wave-front / occupancy-grid resolution (metres per cell)
 wavefront_resolution: 0.03  # was 0.03 – coarser grid is ~4× faster
