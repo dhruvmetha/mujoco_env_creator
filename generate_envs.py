@@ -614,21 +614,9 @@ def generate_single_environment(
     
     # Add obstacles to XML
     add_obstacles_to_xml(worldbody, obstacles)
-    
-    # # Save intermediate XML with obstacles but no robot/goal (for simulation)
-    # temp_xml_path = os.path.join(output_dir, f'env_{env_id:04d}_temp.xml')
-    # try:
-    #     ET.indent(tree, space='  ')
-    #     tree.write(temp_xml_path, encoding='utf-8', xml_declaration=True)
-    # except Exception as e:
-    #     print(f"[Env {env_id}] Error saving temporary XML: {e}")
-    #     return False
-    
-    # Save intermediate XML with obstacles but no robot/goal (for simulation)
-    debug_output_dir = str(Path(__file__).resolve().parent / "test_debug")
-    os.makedirs(debug_output_dir, exist_ok=True)
 
-    temp_xml_path = os.path.join(debug_output_dir, f'env_{env_id:04d}_temp.xml')
+    os.makedirs(output_dir, exist_ok=True)
+    temp_xml_path = os.path.join(output_dir, f'env_{env_id:04d}_temp.xml')
     try:
         ET.indent(tree, space='  ')
         tree.write(temp_xml_path, encoding='utf-8', xml_declaration=True)
@@ -730,8 +718,8 @@ def generate_single_environment(
         return False
     
     # Clean up temp file
-    # if os.path.exists(temp_xml_path):
-    #     os.remove(temp_xml_path)
+    if os.path.exists(temp_xml_path):
+        os.remove(temp_xml_path)
     
     print(f"[Env {env_id}] Successfully generated: {output_path}")
     return True
@@ -777,10 +765,11 @@ def generate_environments_from_pairs(
     # Add obstacles to XML
     add_obstacles_to_xml(worldbody, obstacles)
 
-    # Save intermediate XML with obstacles but no robot/goal (for simulation)
-    debug_output_dir = str(Path(__file__).resolve().parent / "test_debug")
-    os.makedirs(debug_output_dir, exist_ok=True)
-    temp_xml_path = os.path.join(debug_output_dir, f'env_{env_id:04d}_temp.xml')
+    # Save intermediate XML with obstacles but no robot/goal (for simulation).
+    # Use the run-specific output directory so concurrent templates cannot overwrite
+    # each other's temporary files before final XMLs are written.
+    os.makedirs(output_dir, exist_ok=True)
+    temp_xml_path = os.path.join(output_dir, f'env_{env_id:04d}_temp.xml')
     try:
         ET.indent(tree, space='  ')
         tree.write(temp_xml_path, encoding='utf-8', xml_declaration=True)
@@ -880,6 +869,8 @@ def generate_environments_from_pairs(
             continue
 
     print(f"[Env {env_id}] Generated {written} environment(s) from {len(placements)} placement(s)")
+    if os.path.exists(temp_xml_path):
+        os.remove(temp_xml_path)
     return written
 
 def generate_environments_parallel(

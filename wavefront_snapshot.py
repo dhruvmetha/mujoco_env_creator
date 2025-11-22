@@ -35,28 +35,6 @@ class MovableObjectRecord:
         }
 
 
-@dataclass
-class RegionGoalSample:
-    x: float
-    y: float
-    theta: float = 0.0
-
-
-@dataclass
-class RegionGoalBundle:
-    goals: List[RegionGoalSample]
-    blocking_objects: Set[str]
-
-    def to_json(self) -> Dict[str, object]:
-        return {
-            "goals": [
-                {"x": sample.x, "y": sample.y, "theta": sample.theta}
-                for sample in self.goals
-            ],
-            "blocking_objects": sorted(self.blocking_objects),
-        }
-
-
 @dataclass(frozen=True)
 class ObjectTemplate:
     """Immutable geometric information for an object."""
@@ -99,7 +77,6 @@ class WavefrontSnapshot:
     xml_path: str
     config_path: str
     robot_half_extent: Tuple[float, float]
-    region_goals: Dict[str, RegionGoalBundle]
     movable_objects: List[MovableObjectRecord]
 
     def metadata(self) -> Dict[str, object]:
@@ -123,10 +100,6 @@ class WavefrontSnapshot:
             },
             "xml_path": self.xml_path,
             "config_path": self.config_path,
-            "region_goals": {
-                region: bundle.to_json()
-                for region, bundle in self.region_goals.items()
-            },
             "movable_objects": [record.to_json() for record in self.movable_objects],
         }
 
@@ -184,10 +157,16 @@ class WavefrontSnapshotExporter:
             raise ValueError("Environment did not provide robot geometry via get_object_info()")
 
         robot_info = object_info["robot"]
-        self.robot_half_extent = (
-            float(robot_info.get("size_x", 0.25)),
-            float(robot_info.get("size_y", robot_info.get("size_x", 0.25))),  # Use size_x for size_y if missing
-        )
+        size_x = float(robot_info.get("size_x", 0.25))
+        size_y_raw = robot_info.get("size_y")
+        if size_y_raw is None:
+            size_y = size_x
+        else:
+            size_y = float(size_y_raw)
+            if size_y <= 1e-6:
+                size_y = size_x  # Some environments report a zero Y half-extent for spheres
+
+        self.robot_half_extent = (size_x, size_y)
 
         self.static_objects = self._build_static_objects(object_info)
         self.movable_templates = self._build_movable_templates(object_info)
@@ -241,17 +220,6 @@ class WavefrontSnapshotExporter:
             movable_instances,
         )
 
-        region_goals: Dict[str, RegionGoalBundle] = {}
-        if goals_per_region > 0:
-            region_goals = self._sample_region_goals(
-                region_map,
-                region_labels,
-                adjacency,
-                edge_objects,
-                goals_per_region,
-                rng,
-            )
-
         movable_metadata: List[MovableObjectRecord] = [
             MovableObjectRecord(
                 name=inst.name,
@@ -279,7 +247,6 @@ class WavefrontSnapshotExporter:
             xml_path=xml_path,
             config_path=config_path,
             robot_half_extent=self.robot_half_extent,
-            region_goals=region_goals,
             movable_objects=movable_metadata,
         )
 
@@ -556,81 +523,6 @@ class WavefrontSnapshotExporter:
                 dynamic_grid[cell] = -2
 
         return adjacency, edge_objects
-
-    def _sample_region_goals(
-        self,
-        region_map: GridArray,
-        region_labels: Dict[int, str],
-        adjacency: Dict[str, Set[str]],
-        edge_objects: Dict[str, Dict[str, Set[str]]],
-        goals_per_region: int,
-        rng: Optional[np.random.Generator],
-    ) -> Dict[str, RegionGoalBundle]:
-        if goals_per_region <= 0:
-            return {}
-
-        generator = rng or np.random.default_rng()
-        result: Dict[str, RegionGoalBundle] = {}
-        robot_label = next(
-            (label for label in region_labels.values() if "robot" in label),
-            None,
-        )
-        
-        # If no robot region, don't sample any goals
-        if robot_label is None:
-            return {}
-
-        # Find all regions reachable from the robot via BFS on the adjacency graph
-        from collections import deque as collections_deque
-        reachable_regions: Set[str] = {robot_label}
-        queue: collections_deque[str] = collections_deque([robot_label])
-
-        # Use precomputed adjacency directly - no need to rebuild!
-        while queue:
-            current = queue.popleft()
-            for neighbor in adjacency.get(current, set()):
-                if neighbor not in reachable_regions:
-                    reachable_regions.add(neighbor)
-                    queue.append(neighbor)
-
-        # Create reverse lookup from label to region_id
-        label_to_id: Dict[str, int] = {label: region_id for region_id, label in region_labels.items()}
-
-        # Only sample goals for regions reachable from the robot (excluding robot itself)
-        for label in reachable_regions:
-            if "robot" in label:
-                continue
-
-            region_id = label_to_id[label]
-            key = label
-            cells = np.argwhere(region_map == region_id)
-            if cells.size == 0:
-                result[key] = RegionGoalBundle([], set())
-                continue
-
-            sample_count = min(goals_per_region, cells.shape[0])
-            if sample_count == 0:
-                result[key] = RegionGoalBundle([], set())
-                continue
-
-            choices = generator.choice(cells.shape[0], size=sample_count, replace=False)
-            choices = np.atleast_1d(choices)
-
-            goals: List[RegionGoalSample] = []
-            for idx in choices:
-                gx = int(cells[int(idx)][0])
-                gy = int(cells[int(idx)][1])
-                wx = self._grid_to_world_x(gx) + 0.5 * self.resolution
-                wy = self._grid_to_world_y(gy) + 0.5 * self.resolution
-                goals.append(RegionGoalSample(x=wx, y=wy, theta=0.0))
-
-            blocking = set(edge_objects.get(robot_label, {}).get(label, set()))
-            if not blocking and robot_label != "robot":
-                blocking = set(edge_objects.get("robot", {}).get(label, set()))
-
-            result[key] = RegionGoalBundle(goals=goals, blocking_objects=blocking)
-
-        return result
 
     # ------------------------------------------------------------------
     # Object collection
