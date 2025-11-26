@@ -257,14 +257,21 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='executables/mujoco_env_creator/generator_config.yaml')
     parser.add_argument('--processes', type=int, default=None, help='Number of processes to use (default: CPU count)')
+    parser.add_argument('--input_dir', type=str, default=None, help='Override config_dir from the YAML file.')
+    parser.add_argument('--output_dir', type=str, default=None, help='Override output_dir from the YAML file.')
     args = parser.parse_args()
     return args
 
 if __name__ == "__main__":
     args = parse_args()
-    generator_config = load_generator_config(args.config)
-    config_dir = generator_config.get('config_dir', 'env_configs')
-    output_dir = generator_config.get('output_dir', 'mujoco_envs')
+    if args.input_dir and args.output_dir:
+            config_dir = args.input_dir
+            output_dir = args.output_dir
+    else:
+        print("Loading configuration from --config file...")
+        generator_config = load_generator_config(args.config)
+        config_dir = generator_config.get('config_dir', 'env_configs')
+        output_dir = generator_config.get('output_dir', 'mujoco_envs')
     
     # Determine number of processes
     num_processes = args.processes if args.processes else mp.cpu_count()
