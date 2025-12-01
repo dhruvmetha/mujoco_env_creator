@@ -102,11 +102,17 @@ def parse_xml_template(xml_path: str) -> Tuple[ET.ElementTree, Dict[str, Any]]:
     robot_geom = robot_body.find(".//geom[@name='robot']") if robot_body is not None else None
     goal_site = worldbody.find(".//site[@name='goal']")
     
-    # Store original robot position if available (for robot size)
+    # Store original robot position and size
     robot_size = 0.15  # default
+    robot_original_pos = None  # (x, y) position from template
     if robot_geom is not None:
         size_str = robot_geom.get('size', '0.15')
         robot_size = float(size_str.split()[0])
+        # Extract original position
+        pos_str = robot_geom.get('pos', '0 0 0')
+        pos_parts = [float(x) for x in pos_str.split()]
+        if len(pos_parts) >= 2:
+            robot_original_pos = (pos_parts[0], pos_parts[1])
     
     return tree, {
         'walls': walls,
@@ -117,6 +123,7 @@ def parse_xml_template(xml_path: str) -> Tuple[ET.ElementTree, Dict[str, Any]]:
         'robot_body': robot_body,
         'robot_geom': robot_geom,
         'robot_size': robot_size,
+        'robot_original_pos': robot_original_pos,
         'goal_site': goal_site,
     }
 
@@ -142,11 +149,11 @@ def add_obstacles_to_xml(
             condim='4',
             pos=f"{obs['pos'][0]} {obs['pos'][1]} 0.2",
             euler=f"0 0 {obs['rotation']}",
-            friction='1.0 0.005 0.001',
+            friction='0.0 0.005 0.001',
             rgba='1 1 0 1',
-            size=f"{obs['size'][0]} {obs['size'][1]} 0.2",
+            size=f"{obs['size'][0]} {obs['size'][1]} 0.3",
             type='box',
-            mass='0.2',
+            mass='0.1',
         )
 
         # Add free joint
@@ -175,10 +182,10 @@ def add_robot_and_goal_to_xml(
         robot_body, 'geom',
         name='robot',
         type='sphere',
-        pos=f'{robot_pos[0]} {robot_pos[1]} 0.2',
+        pos=f'{robot_pos[0]} {robot_pos[1]} 0.15',
         size=str(robot_size),
         mass='5.0',
-        friction='1.0 0.005 0.001',
+        friction='1.0 0.005 0.0001',
         condim='4'
     )
     
@@ -228,9 +235,34 @@ def place_obstacles(
     num_objects: int,
     object_size_range: Tuple[float, float],
     rng: np.random.Generator,
+    robot_pos: Optional[Tuple[float, float]] = None,
+    robot_size: float = 0.15,
 ) -> List[Dict[str, Any]]:
-    """Randomly place obstacles in the environment with random rotations, avoiding walls."""
+    """Randomly place obstacles in the environment with random rotations, avoiding walls.
+    
+    Args:
+        walls: List of wall dictionaries with 'pos', 'size', and optionally 'rotation'
+        bounds: (min_x, max_x, min_y, max_z) environment bounds
+        num_objects: Number of obstacles to place
+        object_size_range: (min, max) size range for obstacles
+        rng: Random number generator
+        robot_pos: Optional (x, y) position of robot to avoid. If provided, obstacles
+                   will not be placed overlapping with the robot.
+        robot_size: Radius of the robot (used if robot_pos is provided)
+    """
     obstacles = []
+    
+    # Create a pseudo-obstacle for the robot if position is provided
+    # Use a circular approximation (square bounding box) with some margin
+    robot_obstacle = None
+    if robot_pos is not None:
+        # Add margin to robot size for safety
+        robot_margin = robot_size + 0.1  # 10cm margin
+        robot_obstacle = {
+            'pos': [robot_pos[0], robot_pos[1]],
+            'size': [robot_margin, robot_margin],
+            'rotation': 0
+        }
 
     max_attempts = 1000
     for _ in range(num_objects):
@@ -263,6 +295,11 @@ def place_obstacles(
                     if check_collision(obstacle, other_obstacle):
                         collision = True
                         break
+            
+            # Check collision with robot's original position
+            if not collision and robot_obstacle is not None:
+                if check_collision(obstacle, robot_obstacle):
+                    collision = True
 
             if not collision:
                 obstacles.append(obstacle)
@@ -604,12 +641,16 @@ def generate_single_environment(
         bounds = info['bounds']
         worldbody = info['worldbody']
         robot_size = info['robot_size']
+        robot_original_pos = info['robot_original_pos']
     except Exception as e:
         print(f"[Env {env_id}] Error parsing template XML: {e}")
         return False
     
-    # Place obstacles
-    obstacles = place_obstacles(walls, bounds, num_objects, object_size_range, rng)
+    # Place obstacles (avoid robot's original position to prevent overlap)
+    obstacles = place_obstacles(
+        walls, bounds, num_objects, object_size_range, rng,
+        robot_pos=robot_original_pos, robot_size=robot_size
+    )
     print(f"[Env {env_id}] Placed {len(obstacles)} obstacles")
     
     # Add obstacles to XML
@@ -754,12 +795,16 @@ def generate_environments_from_pairs(
         bounds = info['bounds']
         worldbody = info['worldbody']
         robot_size = info['robot_size']
+        robot_original_pos = info['robot_original_pos']
     except Exception as e:
         print(f"[Env {env_id}] Error parsing template XML: {e}")
         return 0
 
-    # Place obstacles
-    obstacles = place_obstacles(walls, bounds, num_objects, object_size_range, rng)
+    # Place obstacles (avoid robot's original position to prevent overlap)
+    obstacles = place_obstacles(
+        walls, bounds, num_objects, object_size_range, rng,
+        robot_pos=robot_original_pos, robot_size=robot_size
+    )
     print(f"[Env {env_id}] Placed {len(obstacles)} obstacles")
 
     # Add obstacles to XML
@@ -805,72 +850,89 @@ def generate_environments_from_pairs(
         print(f"[Env {env_id}] Error building wavefront snapshot: {e}")
         import traceback
         traceback.print_exc()
+        if os.path.exists(temp_xml_path):
+            os.remove(temp_xml_path)
         return 0
+    finally:
+        # If we crashed or exited early without cleaning up, do it here if we didn't succeed
+        # But wait, we need the file for the next step.
+        # So we can't put a finally block here that deletes the file.
+        pass
 
     # Generate all (robot, goal) pairs
-    placements = place_robot_and_goal_pairs(
-        exporter,
-        region_map,
-        region_labels,
-        adjacency,
-        dynamic_grid,
-        clearance_radius,
-        min_goal_distance,
-        max_goal_retries,
-        rng,
-        debug=True,
-    )
+    try:
+        placements = place_robot_and_goal_pairs(
+            exporter,
+            region_map,
+            region_labels,
+            adjacency,
+            dynamic_grid,
+            clearance_radius,
+            min_goal_distance,
+            max_goal_retries,
+            rng,
+            debug=True,
+        )
+    except Exception as e:
+        print(f"[Env {env_id}] Error placing robot/goal: {e}")
+        if os.path.exists(temp_xml_path):
+            os.remove(temp_xml_path)
+        return 0
 
     if not placements:
         print(f"[Env {env_id}] No valid (robot,goal) placements found")
+        if os.path.exists(temp_xml_path):
+            os.remove(temp_xml_path)
         return 0
 
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
 
     written = 0
-    for k, (robot_pos, goal_pos) in enumerate(placements):
-        try:
-            # Re-parse the temp XML for each pair to keep obstacles identical
-            tree_final = ET.parse(temp_xml_path)
-            root_final = tree_final.getroot()
-            worldbody_final = root_final.find('worldbody')
-            if worldbody_final is None:
-                print(f"[Env {env_id}] Error: No worldbody in final XML for pair {k}")
+    try:
+        for k, (robot_pos, goal_pos) in enumerate(placements):
+            try:
+                # Re-parse the temp XML for each pair to keep obstacles identical
+                tree_final = ET.parse(temp_xml_path)
+                root_final = tree_final.getroot()
+                worldbody_final = root_final.find('worldbody')
+                if worldbody_final is None:
+                    print(f"[Env {env_id}] Error: No worldbody in final XML for pair {k}")
+                    continue
+
+                robot_body_final = worldbody_final.find(".//body[@name='robot']")
+                if robot_body_final is not None:
+                    robot_geom_final = robot_body_final.find(".//geom[@name='robot']")
+                    if robot_geom_final is not None:
+                        robot_geom_final.set('pos', f'{robot_pos[0]} {robot_pos[1]} 0.2')
+
+                goal_site_final = worldbody_final.find(".//site[@name='goal']")
+                if goal_site_final is not None:
+                    goal_site_final.set('pos', f'{goal_pos[0]} {goal_pos[1]} 0.0')
+                else:
+                    # if robot was present but goal missing, add site
+                    ET.SubElement(
+                        worldbody_final, 'site',
+                        name='goal',
+                        type='sphere',
+                        pos=f'{goal_pos[0]} {goal_pos[1]} 0.0',
+                        size='0.2',
+                        rgba='1 0 0 0.5'
+                    )
+
+                # Save final XML for this pair
+                out_path = os.path.join(output_dir, f'env_{env_id:04d}_pair_{k:03d}.xml')
+                ET.indent(tree_final, space='  ')
+                tree_final.write(out_path, encoding='utf-8', xml_declaration=True)
+                written += 1
+            except Exception as e:
+                print(f"[Env {env_id}] Error saving XML for pair {k}: {e}")
                 continue
-
-            robot_body_final = worldbody_final.find(".//body[@name='robot']")
-            if robot_body_final is not None:
-                robot_geom_final = robot_body_final.find(".//geom[@name='robot']")
-                if robot_geom_final is not None:
-                    robot_geom_final.set('pos', f'{robot_pos[0]} {robot_pos[1]} 0.2')
-
-            goal_site_final = worldbody_final.find(".//site[@name='goal']")
-            if goal_site_final is not None:
-                goal_site_final.set('pos', f'{goal_pos[0]} {goal_pos[1]} 0.0')
-            else:
-                # if robot was present but goal missing, add site
-                ET.SubElement(
-                    worldbody_final, 'site',
-                    name='goal',
-                    type='sphere',
-                    pos=f'{goal_pos[0]} {goal_pos[1]} 0.0',
-                    size='0.2',
-                    rgba='1 0 0 0.5'
-                )
-
-            # Save final XML for this pair
-            out_path = os.path.join(output_dir, f'env_{env_id:04d}_pair_{k:03d}.xml')
-            ET.indent(tree_final, space='  ')
-            tree_final.write(out_path, encoding='utf-8', xml_declaration=True)
-            written += 1
-        except Exception as e:
-            print(f"[Env {env_id}] Error saving XML for pair {k}: {e}")
-            continue
-
+    finally:
+        if os.path.exists(temp_xml_path):
+            os.remove(temp_xml_path)
+            
     print(f"[Env {env_id}] Generated {written} environment(s) from {len(placements)} placement(s)")
-    if os.path.exists(temp_xml_path):
-        os.remove(temp_xml_path)
     return written
 
 def generate_environments_parallel(
