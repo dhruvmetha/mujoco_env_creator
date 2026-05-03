@@ -5,7 +5,7 @@ This script generates MuJoCo XML maze environments using customizable parameters
 ## Usage
 
 ```bash
-python python/template_generation.py [--height HEIGHT] [--width WIDTH] [--deletion_rate RATE] [--num_mazes N] [--output_dir PATH]
+python template_generation.py [--height HEIGHT] [--width WIDTH] [--deletion_rate RATE] [--num_mazes N] [--output_dir PATH]
 ```
 
 ## Arguments

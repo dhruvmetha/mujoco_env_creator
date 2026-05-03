@@ -502,6 +502,8 @@ def parse_args():
     parser.add_argument('--config', type=str, default='executables/mujoco_env_creator/generator_config.yaml')
     parser.add_argument('--model_path', type=str, default='resources/models/custom/benchmark_room_2.xml')
     parser.add_argument('--num_processes', type=int, default=None, help='Number of parallel processes (default: CPU count)')
+    parser.add_argument('--output_dir', type=str, default=None, help='Override the config_dir in the YAML file.')
+    parser.add_argument('--num_configs', type=int, default=None, help='Override the num_configs in the YAML file.')
     args = parser.parse_args()
     return args
 
@@ -540,7 +542,7 @@ def generate_single_env_config(env_index, shared_data):
         return env_index, False, "Distance constraint not satisfied"
     
     # Check robot-goal connectivity if enabled
-    is_robot_goal_connected = True
+    is_robot_goal_connected = False
     if enable_connectivity_check:
         robot_obj = config['worldbody']['robot']
         goal_obj = config['worldbody']['goal']
@@ -551,7 +553,7 @@ def generate_single_env_config(env_index, shared_data):
         )
     
     if is_robot_goal_connected:
-        return env_index, False, "Robot-goal connectivity check failed"
+        return env_index, False, "Robot can reach goal in free space"
     
     # Save the configuration
     output_path = os.path.join(config_dir, f'env_config_{env_index+1}.yaml')
@@ -563,8 +565,8 @@ if __name__ == "__main__":
     args = parse_args()
     generator_config = load_generator_config(args.config)
     model_path = args.model_path
-    num_configs = generator_config['num_configs']
-    config_dir = generator_config.get('config_dir', 'env_configs')
+    num_configs = args.num_configs if args.num_configs is not None else generator_config['num_configs']
+    config_dir = args.output_dir if args.output_dir is not None else generator_config.get('config_dir', 'env_configs')
     os.makedirs(config_dir, exist_ok=True)
     
     # Determine number of processes
