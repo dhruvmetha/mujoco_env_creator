@@ -133,13 +133,17 @@ class WavefrontSnapshotExporter:
     # Match the fixed resolution used by the C++ implementation
     DEFAULT_RESOLUTION: float = 0.01
     INFLATION_EPSILON: float = 0.005
+    # Skip "regions" smaller than this many cells — they're sub-robot-footprint and
+    # can't host the car anyway, just clutter the graph.
+    MIN_REGION_CELLS: int = 8
     NEIGHBOR_OFFSETS: Tuple[Tuple[int, int], ...] = (
         (-1, -1), (-1, 0), (-1, 1),
         (0, -1),            (0, 1),
         (1, -1),  (1, 0),   (1, 1),
     )
 
-    def __init__(self, env: Any, resolution: Optional[float] = None) -> None:
+    def __init__(self, env: Any, resolution: Optional[float] = None,
+                 robot_half_extent_override: Optional[Tuple[float, float]] = None) -> None:
         self._env = env
         self.resolution = resolution or self.DEFAULT_RESOLUTION
         bounds_sequence = cast(Sequence[float], self._env.get_world_bounds())
@@ -156,17 +160,23 @@ class WavefrontSnapshotExporter:
         if "robot" not in object_info:
             raise ValueError("Environment did not provide robot geometry via get_object_info()")
 
-        robot_info = object_info["robot"]
-        size_x = float(robot_info.get("size_x", 0.25))
-        size_y_raw = robot_info.get("size_y")
-        if size_y_raw is None:
-            size_y = size_x
+        if robot_half_extent_override is not None:
+            # Caller supplied authoritative robot footprint (e.g. from namo_config.planning.robot_size).
+            # Use it instead of the env's first-geom guess, which under-estimates multi-geom robots.
+            self.robot_half_extent = (float(robot_half_extent_override[0]),
+                                      float(robot_half_extent_override[1]))
         else:
-            size_y = float(size_y_raw)
-            if size_y <= 1e-6:
-                size_y = size_x  # Some environments report a zero Y half-extent for spheres
+            robot_info = object_info["robot"]
+            size_x = float(robot_info.get("size_x", 0.25))
+            size_y_raw = robot_info.get("size_y")
+            if size_y_raw is None:
+                size_y = size_x
+            else:
+                size_y = float(size_y_raw)
+                if size_y <= 1e-6:
+                    size_y = size_x  # Some environments report a zero Y half-extent for spheres
 
-        self.robot_half_extent = (size_x, size_y)
+            self.robot_half_extent = (size_x, size_y)
 
         self.static_objects = self._build_static_objects(object_info)
         self.movable_templates = self._build_movable_templates(object_info)
@@ -436,7 +446,16 @@ class WavefrontSnapshotExporter:
                 if visited[gx, gy] or dynamic_grid[gx, gy] == -2:
                     continue
                 region_cells = bfs((gx, gy))
-                if not region_cells or touches_border(region_cells):
+                if not region_cells:
+                    continue
+                # Skip tiny regions — they can't host the robot footprint.
+                if len(region_cells) < self.MIN_REGION_CELLS:
+                    continue
+                # Skip the "outside the walls" region: it wraps around the maze and
+                # touches the grid boundary (the wavefront's grid is slightly larger
+                # than the maze interior). Inner regions are blocked from the grid edge
+                # by walls, so they don't trigger this.
+                if touches_border(region_cells):
                     continue
                 for cell in region_cells:
                     region_map[cell] = region_id

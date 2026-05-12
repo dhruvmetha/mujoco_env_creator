@@ -22,6 +22,43 @@ import itertools
 import numpy as np
 import yaml
 
+
+def update_robot_xy_in_xml(worldbody: ET.Element, x: float, y: float, z_default: float = 0.2) -> bool:
+    """Update the robot's xy position. Handles both:
+       - point robot: body[@name='robot'] containing a sphere geom (set geom pos to x y z_default)
+       - diff-drive car: body[@name='car'] using a freejoint (set body pos to x y CAR_SPAWN_Z)
+    Returns True if either was found and updated."""
+    updated = False
+    pr = worldbody.find(".//body[@name='robot']")
+    if pr is not None:
+        g = pr.find(".//geom[@name='robot']")
+        if g is not None:
+            g.set('pos', f'{x} {y} {z_default}')
+            updated = True
+    car = worldbody.find(".//body[@name='car']")
+    if car is not None:
+        # Preserve the existing z so the wheels don't re-clip the floor at re-load.
+        existing = car.get('pos', '0 0 0.010').split()
+        z = existing[2] if len(existing) >= 3 else '0.010'
+        car.set('pos', f'{x} {y} {z}')
+        updated = True
+    return updated
+
+
+def load_robot_half_extent_from_namo_config(namo_config_path: str):
+    """Read planning.robot_size from namo_config yaml. Returns (hx, hy) or None."""
+    try:
+        with open(namo_config_path, 'r') as f:
+            cfg = yaml.safe_load(f) or {}
+        rs = (cfg.get('planning') or {}).get('robot_size')
+        if isinstance(rs, (list, tuple)) and len(rs) >= 2:
+            return (float(rs[0]), float(rs[1]))
+        if isinstance(rs, (int, float)):
+            return (float(rs), float(rs))
+    except Exception:
+        pass
+    return None
+
 try:
     from shapely.geometry import Point, Polygon
     SHAPELY_AVAILABLE = True
@@ -131,32 +168,31 @@ def parse_xml_template(xml_path: str) -> Tuple[ET.ElementTree, Dict[str, Any]]:
 def add_obstacles_to_xml(
     worldbody: ET.Element,
     obstacles: List[Dict[str, Any]],
+    object_half_height: float = 0.3,
 ) -> None:
     """Add obstacle bodies to the XML worldbody.
 
     Args:
         worldbody: The worldbody XML element
         obstacles: List of obstacle dicts with 'pos', 'size', and 'rotation'
+        object_half_height: z half-size (and z-position) for box obstacles. 0.3 for the
+            original 30cm point robot; 0.035 for the 7cm car.
     """
+    z = object_half_height
     for i, obs in enumerate(obstacles):
-        # Create body with free joint (movable)
         body = ET.SubElement(worldbody, 'body', name=f'obstacle_{i}_movable')
-
-        # Add geom (rectangular box with rotation)
         ET.SubElement(
             body, 'geom',
             name=f'obstacle_{i}_movable',
             condim='4',
-            pos=f"{obs['pos'][0]} {obs['pos'][1]} 0.2",
+            pos=f"{obs['pos'][0]} {obs['pos'][1]} {z}",
             euler=f"0 0 {obs['rotation']}",
             friction='0.0 0.005 0.001',
             rgba='1 1 0 1',
-            size=f"{obs['size'][0]} {obs['size'][1]} 0.3",
+            size=f"{obs['size'][0]} {obs['size'][1]} {z}",
             type='box',
             mass='0.1',
         )
-
-        # Add free joint
         ET.SubElement(body, 'joint', type='free')
 
 
@@ -165,38 +201,24 @@ def add_robot_and_goal_to_xml(
     robot_pos: Tuple[float, float],
     goal_pos: Tuple[float, float],
     robot_size: float = 0.15,
+    goal_size: float = 0.2,
 ) -> None:
-    """Add robot and goal to XML worldbody with new positions.
-    
-    Args:
-        worldbody: The worldbody XML element
-        robot_pos: (x, y) position for robot
-        goal_pos: (x, y) position for goal
-        robot_size: Radius of the robot sphere
-    """
-    # Add robot body
+    """Add robot and goal to XML worldbody with new positions."""
     robot_body = ET.SubElement(worldbody, 'body', name='robot')
     ET.SubElement(robot_body, 'joint', name='joint_x', type='slide', pos='0 0 0', axis='1 0 0')
     ET.SubElement(robot_body, 'joint', name='joint_y', type='slide', pos='0 0 0', axis='0 1 0')
     ET.SubElement(
         robot_body, 'geom',
-        name='robot',
-        type='sphere',
+        name='robot', type='sphere',
         pos=f'{robot_pos[0]} {robot_pos[1]} 0.15',
-        size=str(robot_size),
-        mass='5.0',
-        friction='1.0 0.005 0.0001',
-        condim='4'
+        size=str(robot_size), mass='5.0',
+        friction='1.0 0.005 0.0001', condim='4'
     )
-    
-    # Add goal site
     ET.SubElement(
         worldbody, 'site',
-        name='goal',
-        type='sphere',
+        name='goal', type='sphere',
         pos=f'{goal_pos[0]} {goal_pos[1]} 0.0',
-        size='0.2',
-        rgba='1 0 0 0.5'
+        size=str(goal_size), rgba='1 0 0 0.5'
     )
 
 
@@ -527,6 +549,8 @@ def place_robot_and_goal_pairs(
     max_goal_retries: int,
     rng: np.random.Generator,
     debug: bool = False,
+    require_adjacent: bool = False,
+    samples_per_pair: int = 1,
 ) -> List[Tuple[Tuple[float, float], Tuple[float, float]]]:
     """For every connected component, generate a placement for every unordered pair
     of distinct regions (n choose 2). Returns a list of (robot_pos, goal_pos) pairs.
@@ -542,51 +566,50 @@ def place_robot_and_goal_pairs(
         print(f"  [DEBUG] Generating pairs for {len(valid_components)} valid components")
 
     def try_sample_order(src_region: str, tgt_region: str) -> bool:
-        """Try up to max_goal_retries to sample (robot in src_region, goal in tgt_region).
-        On success appends to placements and returns True."""
-        for attempt in range(max_goal_retries):
-            # sample robot with clearance
+        """Sample up to samples_per_pair successful (robot in src, goal in tgt) placements.
+        Each successful sample is appended to placements. Returns True if at least one
+        sample succeeded."""
+        successes = 0
+        # Allow enough attempts for the requested number of samples plus retry budget.
+        attempt_budget = max(max_goal_retries, samples_per_pair * 3)
+        for attempt in range(attempt_budget):
+            if successes >= samples_per_pair:
+                break
             robot_pos = exporter.sample_cell_with_clearance(src_region, region_map, region_labels, dynamic_grid, clearance_radius, rng)
             if robot_pos is None:
                 if debug:
                     print(f"  [DEBUG] Failed to sample robot in region {src_region} (attempt {attempt})")
                 continue
-
-            # sample goal with clearance
             goal_pos = exporter.sample_cell_with_clearance(tgt_region, region_map, region_labels, dynamic_grid, clearance_radius, rng)
             if goal_pos is None:
                 if debug:
                     print(f"  [DEBUG] Failed to sample goal in region {tgt_region} (attempt {attempt})")
                 continue
-
-            # clearance check for goal
             gx = exporter._world_to_grid_x(goal_pos[0])
             gy = exporter._world_to_grid_y(goal_pos[1])
             if not exporter.check_cell_clearance((gx, gy), clearance_radius, dynamic_grid):
                 if debug:
                     print(f"  [DEBUG] Goal clearance failed at attempt {attempt} for regions {src_region}->{tgt_region}")
                 continue
-
-            # distance check
             distance = np.hypot(goal_pos[0] - robot_pos[0], goal_pos[1] - robot_pos[1])
             if distance < min_goal_distance:
                 if debug:
                     print(f"  [DEBUG] Distance {distance:.2f} < min {min_goal_distance:.2f} for regions {src_region}->{tgt_region}")
                 continue
-
-            # passed all checks
             placements.append((robot_pos, goal_pos))
+            successes += 1
             if debug:
-                print(f"  [DEBUG] Added placement for regions {src_region}->{tgt_region} (distance={distance:.2f})")
-            return True
-
-        # failed all attempts
-        return False
+                print(f"  [DEBUG] Added placement #{successes} for regions {src_region}->{tgt_region} (distance={distance:.2f})")
+        return successes > 0
 
     for comp_idx, component in enumerate(valid_components):
         regions = list(component)
         # iterate over unordered pairs (i<j) -> C(n,2)
         for ri, rj in itertools.combinations(regions, 2):
+            # If require_adjacent, only emit pairs that are direct neighbors in the
+            # adjacency graph (i.e. one obstacle removal connects them = "region opening").
+            if require_adjacent and (rj not in adjacency.get(ri, set())):
+                continue
             ok1 = try_sample_order(ri, rj)
             ok2 = try_sample_order(rj, ri)
             if not (ok1 or ok2) and debug:
@@ -629,6 +652,8 @@ def generate_single_environment(
     # Extract config
     num_objects = config.get('num_objects', DEFAULT_NUM_OBJECTS)
     object_size_range = tuple(config.get('object_size_range', DEFAULT_OBJECT_SIZE_RANGE))
+    object_half_height = config.get('object_half_height', 0.3)
+    goal_size = config.get('goal_size', 0.2)
     clearance_radius = config.get('clearance_radius', DEFAULT_CLEARANCE_RADIUS)
     min_goal_distance = config.get('min_goal_distance', DEFAULT_MIN_GOAL_DISTANCE)
     resolution = config.get('resolution', DEFAULT_RESOLUTION)
@@ -654,7 +679,7 @@ def generate_single_environment(
     print(f"[Env {env_id}] Placed {len(obstacles)} obstacles")
     
     # Add obstacles to XML
-    add_obstacles_to_xml(worldbody, obstacles)
+    add_obstacles_to_xml(worldbody, obstacles, object_half_height=object_half_height)
 
     os.makedirs(output_dir, exist_ok=True)
     temp_xml_path = os.path.join(output_dir, f'env_{env_id:04d}_temp.xml')
@@ -672,7 +697,10 @@ def generate_single_environment(
         rl_env_cls = getattr(namo_rl, "RLEnvironment")
         env = rl_env_cls(temp_xml_path, namo_config_path, visualize=False)
         
-        exporter = WavefrontSnapshotExporter(env, resolution=resolution)
+        exporter = WavefrontSnapshotExporter(
+            env, resolution=resolution,
+            robot_half_extent_override=load_robot_half_extent_from_namo_config(namo_config_path),
+        )
         
         # Build snapshot using simulation environment
         snapshot = exporter.build_snapshot(
@@ -735,13 +763,9 @@ def generate_single_environment(
         #     os.remove(temp_xml_path)
         return False
     
-    # Update robot position in the XML
-    robot_body_final = worldbody_final.find(".//body[@name='robot']")
-    if robot_body_final is not None:
-        robot_geom_final = robot_body_final.find(".//geom[@name='robot']")
-        if robot_geom_final is not None:
-            robot_geom_final.set('pos', f'{robot_pos[0]} {robot_pos[1]} 0.2')
-    
+    # Update robot position in the XML (handles both point robot and diff-drive car)
+    update_robot_xy_in_xml(worldbody_final, robot_pos[0], robot_pos[1])
+
     # Update goal position in the XML
     goal_site_final = worldbody_final.find(".//site[@name='goal']")
     if goal_site_final is not None:
@@ -783,10 +807,14 @@ def generate_environments_from_pairs(
     # Extract config
     num_objects = config.get('num_objects', DEFAULT_NUM_OBJECTS)
     object_size_range = tuple(config.get('object_size_range', DEFAULT_OBJECT_SIZE_RANGE))
+    object_half_height = config.get('object_half_height', 0.3)
+    goal_size = config.get('goal_size', 0.2)
     clearance_radius = config.get('clearance_radius', DEFAULT_CLEARANCE_RADIUS)
     min_goal_distance = config.get('min_goal_distance', DEFAULT_MIN_GOAL_DISTANCE)
     resolution = config.get('resolution', DEFAULT_RESOLUTION)
     max_goal_retries = config.get('max_goal_retries', DEFAULT_MAX_GOAL_RETRIES)
+    require_adjacent = bool(config.get('require_adjacent', False))
+    samples_per_pair = int(config.get('samples_per_pair', 1))
 
     # Parse template XML
     try:
@@ -808,7 +836,7 @@ def generate_environments_from_pairs(
     print(f"[Env {env_id}] Placed {len(obstacles)} obstacles")
 
     # Add obstacles to XML
-    add_obstacles_to_xml(worldbody, obstacles)
+    add_obstacles_to_xml(worldbody, obstacles, object_half_height=object_half_height)
 
     # Save intermediate XML with obstacles but no robot/goal (for simulation).
     # Use the run-specific output directory so concurrent templates cannot overwrite
@@ -829,7 +857,10 @@ def generate_environments_from_pairs(
         rl_env_cls = getattr(namo_rl, "RLEnvironment")
         env = rl_env_cls(temp_xml_path, namo_config_path, visualize=False)
 
-        exporter = WavefrontSnapshotExporter(env, resolution=resolution)
+        exporter = WavefrontSnapshotExporter(
+            env, resolution=resolution,
+            robot_half_extent_override=load_robot_half_extent_from_namo_config(namo_config_path),
+        )
 
         snapshot = exporter.build_snapshot(
             xml_path=temp_xml_path,
@@ -872,6 +903,8 @@ def generate_environments_from_pairs(
             max_goal_retries,
             rng,
             debug=True,
+            require_adjacent=require_adjacent,
+            samples_per_pair=samples_per_pair,
         )
     except Exception as e:
         print(f"[Env {env_id}] Error placing robot/goal: {e}")
@@ -900,15 +933,12 @@ def generate_environments_from_pairs(
                     print(f"[Env {env_id}] Error: No worldbody in final XML for pair {k}")
                     continue
 
-                robot_body_final = worldbody_final.find(".//body[@name='robot']")
-                if robot_body_final is not None:
-                    robot_geom_final = robot_body_final.find(".//geom[@name='robot']")
-                    if robot_geom_final is not None:
-                        robot_geom_final.set('pos', f'{robot_pos[0]} {robot_pos[1]} 0.2')
+                update_robot_xy_in_xml(worldbody_final, robot_pos[0], robot_pos[1])
 
                 goal_site_final = worldbody_final.find(".//site[@name='goal']")
                 if goal_site_final is not None:
                     goal_site_final.set('pos', f'{goal_pos[0]} {goal_pos[1]} 0.0')
+                    goal_site_final.set('size', str(goal_size))
                 else:
                     # if robot was present but goal missing, add site
                     ET.SubElement(
@@ -916,7 +946,7 @@ def generate_environments_from_pairs(
                         name='goal',
                         type='sphere',
                         pos=f'{goal_pos[0]} {goal_pos[1]} 0.0',
-                        size='0.2',
+                        size=str(goal_size),
                         rgba='1 0 0 0.5'
                     )
 
@@ -997,10 +1027,69 @@ def main():
     parser.add_argument('--num-objects', type=int, default=DEFAULT_NUM_OBJECTS)
     parser.add_argument('--clearance-radius', type=float, default=DEFAULT_CLEARANCE_RADIUS)
     parser.add_argument('--min-goal-distance', type=float, default=DEFAULT_MIN_GOAL_DISTANCE)
-    parser.add_argument('--max-goal-retries', type=int, default=DEFAULT_MAX_GOAL_RETRIES, 
+    parser.add_argument('--max-goal-retries', type=int, default=DEFAULT_MAX_GOAL_RETRIES,
                         help='Maximum retries for goal placement with clearance')
-    
+    parser.add_argument('--robot-scale', type=float, default=1.0,
+                        help='Scale factor applied to all distance defaults (object size, '
+                             'clearance, min goal distance, resolution). Use 0.233 for the '
+                             '7cm car. Knobs explicitly set on the CLI take precedence.')
+    parser.add_argument('--object-half-height', type=float, default=None,
+                        help='z half-size (and z-position) for box obstacles. Default 0.3 '
+                             'for original 30cm point robot. With --robot-scale 0.233 the '
+                             'car-friendly default of 0.035 is used.')
+    parser.add_argument('--object-size-range', type=float, nargs=2, metavar=('MIN', 'MAX'),
+                        default=None,
+                        help='(min, max) full side length for sampled obstacle boxes. '
+                             'Overrides --robot-scale auto-scaling.')
+    parser.add_argument('--goal-size', type=float, default=None,
+                        help='Visual radius of the goal site sphere. Default 0.2 for original '
+                             'point robot; auto-scaled by --robot-scale otherwise.')
+    parser.add_argument('--require-adjacent', action='store_true', default=True,
+                        help='Only emit (robot, goal) pairs whose regions are direct neighbors '
+                             'in the adjacency graph (1-hop / "region opening" puzzles). On by '
+                             'default. Disable with --no-require-adjacent for multi-hop chains.')
+    parser.add_argument('--no-require-adjacent', action='store_false', dest='require_adjacent',
+                        help='Allow multi-hop region pairs (any pair in the same connected component).')
+    parser.add_argument('--samples-per-pair', type=int, default=1,
+                        help='Max successful (robot, goal) samples per (region_pair, ordering). '
+                             'Default 1 (one env per ordering = up to 2 envs per pair). '
+                             'Set higher (e.g. 10) to extract many distinct positions per pair.')
+
     args = parser.parse_args()
+
+    # If a robot scale is given, scale the distance defaults the user did not explicitly override.
+    # Grid resolution is intentionally NOT scaled — it's an occupancy-analysis cell size,
+    # not a physical robot dimension; keep at default.
+    if args.robot_scale != 1.0:
+        s = args.robot_scale
+        if args.clearance_radius == DEFAULT_CLEARANCE_RADIUS:
+            # Disable the extra clearance buffer — the wavefront's robot_size inflation
+            # already guarantees the cell is reachable, no extra margin needed.
+            args.clearance_radius = 0.0
+        if args.min_goal_distance == DEFAULT_MIN_GOAL_DISTANCE:
+            # Disable the min-goal-distance filter — any (robot, goal) pair sampled in
+            # different regions is a valid NAMO problem regardless of how close they are
+            # geometrically (region-pair semantics is what matters, not Euclidean distance).
+            args.min_goal_distance = 0.0
+        scaled_size_range = (round(DEFAULT_OBJECT_SIZE_RANGE[0] * s, 2),
+                             round(DEFAULT_OBJECT_SIZE_RANGE[1] * s, 2))
+        # Default object height for car when robot_scale ~= 0.233 (matches scale_environment.py)
+        if args.object_half_height is None and abs(s - 0.233) < 0.01:
+            args.object_half_height = 0.035
+        if args.goal_size is None:
+            args.goal_size = round(0.2 * s, 2)
+        print(f"[robot-scale={s}] applied scaled defaults: "
+              f"object_size_range={scaled_size_range}, "
+              f"clearance_radius={args.clearance_radius}, "
+              f"min_goal_distance={args.min_goal_distance}, "
+              f"object_half_height={args.object_half_height}, "
+              f"goal_size={args.goal_size}")
+    else:
+        scaled_size_range = None
+    if args.object_half_height is None:
+        args.object_half_height = 0.3
+    if args.goal_size is None:
+        args.goal_size = 0.2
     
     # Check that namo_rl is available
     if not NAMO_RL_AVAILABLE:
@@ -1019,6 +1108,14 @@ def main():
     config['clearance_radius'] = args.clearance_radius
     config['min_goal_distance'] = args.min_goal_distance
     config['max_goal_retries'] = args.max_goal_retries
+    config['object_half_height'] = args.object_half_height
+    config['goal_size'] = args.goal_size
+    config['require_adjacent'] = args.require_adjacent
+    config['samples_per_pair'] = args.samples_per_pair
+    if args.object_size_range is not None:
+        config['object_size_range'] = tuple(args.object_size_range)
+    elif scaled_size_range is not None and 'object_size_range' not in config:
+        config['object_size_range'] = scaled_size_range
     
     # Generate environments
     generate_environments_parallel(
