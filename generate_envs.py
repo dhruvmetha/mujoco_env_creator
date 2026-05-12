@@ -77,7 +77,14 @@ except ImportError:
     NAMO_RL_AVAILABLE = False
     namo_rl = None  # legacy paths will fail loudly if they hit this
 
-from wavefront_snapshot import (
+# Use the single source of truth for wavefront snapshots: the runtime planner's
+# version under namo.visualization. Avoids drift between gen-time and plan-time
+# region/adjacency views.
+_NAMO_PYTHON = os.environ.get("NAMO_PYTHON_PATH",
+                              "/common/home/dm1487/robotics_research/ktamp/namo/python")
+if _NAMO_PYTHON not in sys.path:
+    sys.path.insert(0, _NAMO_PYTHON)
+from namo.visualization.wavefront_snapshot import (
     WavefrontSnapshotExporter, ObjectTemplate, ObjectInstance,
 )
 
@@ -121,12 +128,90 @@ def _build_geometry_from_placements(
             is_static=False,
         )
         movable_templates[name] = tpl
+        # `rotation` in obs dict is in DEGREES (set by place_obstacles via
+        # np.random.uniform(0,360)). Convert to radians before quaternion.
+        import math as _math
+        rot_rad = _math.radians(float(obs.get('rotation', 0.0)))
         movable_instances.append(ObjectInstance(
             template=tpl,
             position=(float(obs['pos'][0]), float(obs['pos'][1])),
-            quaternion=_yaw_to_quat(float(obs.get('rotation', 0.0))),
+            quaternion=_yaw_to_quat(rot_rad),
         ))
     return static_objects, movable_templates, movable_instances
+
+
+def _compute_runtime_bounds(static_objects, movable_instances, robot_original_pos, robot_half_extent):
+    """Replicate NAMOEnvironment::get_environment_bounds (C++):
+    start at [-2,2]² minimum, expand to include every object corner + robot
+    radius, then add 0.5m padding on all sides.
+    """
+    xmin, xmax, ymin, ymax = -2.0, 2.0, -2.0, 2.0
+    import math
+    def expand_for(instance, half_w, half_h):
+        nonlocal xmin, xmax, ymin, ymax
+        cx, cy = instance.position
+        yaw = math.atan2(2.0 * (instance.quaternion[0] * instance.quaternion[3]),
+                         1.0 - 2.0 * (instance.quaternion[3] * instance.quaternion[3]))
+        ca, sa = math.cos(yaw), math.sin(yaw)
+        for lx, ly in [(-half_w, -half_h), (half_w, -half_h), (half_w, half_h), (-half_w, half_h)]:
+            wx = cx + lx * ca - ly * sa
+            wy = cy + lx * sa + ly * ca
+            xmin = min(xmin, wx); xmax = max(xmax, wx)
+            ymin = min(ymin, wy); ymax = max(ymax, wy)
+    for inst in static_objects:
+        # C++ uses obj.size[0] * 0.5 (i.e. HALF of the half-extent — quarter-extent in practice).
+        # Preserve that behaviour exactly.
+        expand_for(inst, inst.half_extent[0] * 0.5, inst.half_extent[1] * 0.5)
+    for inst in movable_instances:
+        expand_for(inst, inst.half_extent[0] * 0.5, inst.half_extent[1] * 0.5)
+    if robot_original_pos is not None:
+        rx, ry = robot_original_pos[0], robot_original_pos[1]
+        rr = robot_half_extent[0]
+        xmin = min(xmin, rx - rr); xmax = max(xmax, rx + rr)
+        ymin = min(ymin, ry - rr); ymax = max(ymax, ry + rr)
+    PADDING = 0.5
+    return (xmin - PADDING, xmax + PADDING, ymin - PADDING, ymax + PADDING)
+
+
+def _runtime_validate_adjacency(exporter, robot_pos, goal_pos, debug=False):
+    """Re-run the wavefront with the candidate robot/goal poses so the
+    'clear cells around robot' step is applied exactly as the planner sees it.
+
+    Accept only if the planner-view snapshot yields distinct robot/goal regions
+    that are directly adjacent (1-hop). Rejects:
+      - 'robot_goal' label  → robot already in goal region (no opening needed)
+      - Non-adjacent regions → multi-hop
+    """
+    # Build a fresh exporter from the same geometry but with the candidate robot/goal.
+    # Reusing the existing exporter's geometry caches.
+    rebuilt = type(exporter).from_geometry(
+        bounds=exporter.bounds,
+        robot_half_extent=exporter.robot_half_extent,
+        static_objects=exporter.static_objects,
+        movable_templates=exporter.movable_templates,
+        movable_instances=list(exporter._preset_movables or []),
+        robot_pose=(float(robot_pos[0]), float(robot_pos[1]), 0.0),
+        goal_pose=(float(goal_pos[0]), float(goal_pos[1]), 0.0),
+        resolution=exporter.resolution,
+    )
+    snap = rebuilt.build_snapshot(
+        xml_path="<gen-validate>", config_path="<gen-validate>",
+        goal_radius=0.05,
+    )
+    labels = set(snap.region_labels.values())
+    if "robot_goal" in labels:
+        if debug:
+            print(f"  [DEBUG] validate: robot_goal — already-reachable, skip")
+        return False
+    if "robot" in labels and "goal" in labels:
+        if "goal" in snap.adjacency.get("robot", set()):
+            return True
+        if debug:
+            print(f"  [DEBUG] validate: regions present but non-adjacent (multi-hop), skip")
+        return False
+    if debug:
+        print(f"  [DEBUG] validate: labels={labels} — missing robot or goal, skip")
+    return False
 
 
 # ------------------------------------------------------------------
@@ -657,6 +742,16 @@ def place_robot_and_goal_pairs(
                 if debug:
                     print(f"  [DEBUG] Distance {distance:.2f} < min {min_goal_distance:.2f} for regions {src_region}->{tgt_region}")
                 continue
+            # Runtime-equivalent validation: re-run the wavefront with the
+            # candidate robot pose so the "clear cells around robot" step is
+            # applied exactly as the planner will see it. Reject if the goal
+            # ends up in the same region (trivial) or non-adjacent (multi-hop).
+            if _runtime_validate_adjacency is not None:
+                ok_adj = _runtime_validate_adjacency(
+                    exporter, robot_pos, goal_pos, debug=debug
+                )
+                if not ok_adj:
+                    continue
             placements.append((robot_pos, goal_pos))
             successes += 1
             if debug:
@@ -905,17 +1000,27 @@ def generate_environments_from_pairs(
         robot_half_extent = load_robot_half_extent_from_namo_config(namo_config_path)
         if robot_half_extent is None:
             robot_half_extent = (robot_size, robot_size)
-        rx, ry, rtheta = robot_original_pos[0], robot_original_pos[1], 0.0
+        # No robot/goal yet at gen time — we're about to PICK their placement
+        # from the connectivity graph. Pass None so the wavefront skips the
+        # runtime-only "clear cells around robot pose" and "label robot/goal
+        # regions" steps; all free components get generic region_N labels.
         static_objects, movable_templates, movable_instances = _build_geometry_from_placements(
-            walls, obstacles, robot_pose=(rx, ry, rtheta), goal_pose=None,
+            walls, obstacles, robot_pose=None, goal_pose=None,
+        )
+        # Match runtime NAMOEnvironment::get_environment_bounds: min [-2,2]²,
+        # expand to include all geometry + robot, then pad 0.5m on all sides.
+        # Otherwise gen's tight-to-walls bounds give a different grid than
+        # the C++ runtime, causing region collapse / fusion at planning time.
+        runtime_bounds = _compute_runtime_bounds(
+            static_objects, movable_instances, robot_original_pos, robot_half_extent,
         )
         exporter = WavefrontSnapshotExporter.from_geometry(
-            bounds=bounds,
+            bounds=runtime_bounds,
             robot_half_extent=robot_half_extent,
             static_objects=static_objects,
             movable_templates=movable_templates,
             movable_instances=movable_instances,
-            robot_pose=(rx, ry, rtheta),
+            robot_pose=None,
             goal_pose=None,
             resolution=resolution,
         )
