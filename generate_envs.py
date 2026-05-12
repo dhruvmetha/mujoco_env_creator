@@ -66,16 +66,67 @@ except ImportError:
     SHAPELY_AVAILABLE = False
     print("Warning: shapely not available, using basic collision detection")
 
-# Import MuJoCo environment and wavefront snapshot exporter
+# Import MuJoCo environment and wavefront snapshot exporter.
+# generate_environments_from_pairs no longer needs namo_rl (uses the
+# WavefrontSnapshotExporter.from_geometry path). It's still imported for
+# legacy entry points that load real envs.
 try:
     import namo_rl
     NAMO_RL_AVAILABLE = True
 except ImportError:
     NAMO_RL_AVAILABLE = False
-    print("Warning: namo_rl not available. Make sure PYTHONPATH includes the namo_cpp build directory.")
-    sys.exit(1)
+    namo_rl = None  # legacy paths will fail loudly if they hit this
 
-from wavefront_snapshot import WavefrontSnapshotExporter
+from wavefront_snapshot import (
+    WavefrontSnapshotExporter, ObjectTemplate, ObjectInstance,
+)
+
+
+def _yaw_to_quat(theta: float) -> Tuple[float, float, float, float]:
+    """yaw → (w, x, y, z) about z-axis."""
+    import math
+    half = 0.5 * theta
+    return (math.cos(half), 0.0, 0.0, math.sin(half))
+
+
+def _build_geometry_from_placements(
+    walls: List[Dict[str, Any]],
+    obstacles: List[Dict[str, Any]],
+    robot_pose: Tuple[float, float, float],
+    goal_pose: Optional[Tuple[float, float, float]],
+):
+    """Convert pure-Python placement dicts (walls + obstacles) into the
+    static_objects / movable_templates / movable_instances format that
+    WavefrontSnapshotExporter.from_geometry expects."""
+    static_objects: List[ObjectInstance] = []
+    for i, w in enumerate(walls):
+        tpl = ObjectTemplate(
+            name=f"wall_{i}",
+            half_extent=(float(w['size'][0]), float(w['size'][1])),
+            is_static=True,
+        )
+        static_objects.append(ObjectInstance(
+            template=tpl,
+            position=(float(w['pos'][0]), float(w['pos'][1])),
+            quaternion=(1.0, 0.0, 0.0, 0.0),
+        ))
+
+    movable_templates: Dict[str, ObjectTemplate] = {}
+    movable_instances: List[ObjectInstance] = []
+    for i, obs in enumerate(obstacles):
+        name = f"obstacle_{i}_movable"
+        tpl = ObjectTemplate(
+            name=name,
+            half_extent=(float(obs['size'][0]), float(obs['size'][1])),
+            is_static=False,
+        )
+        movable_templates[name] = tpl
+        movable_instances.append(ObjectInstance(
+            template=tpl,
+            position=(float(obs['pos'][0]), float(obs['pos'][1])),
+            quaternion=_yaw_to_quat(float(obs.get('rotation', 0.0))),
+        ))
+    return static_objects, movable_templates, movable_instances
 
 
 # ------------------------------------------------------------------
@@ -150,6 +201,16 @@ def parse_xml_template(xml_path: str) -> Tuple[ET.ElementTree, Dict[str, Any]]:
         pos_parts = [float(x) for x in pos_str.split()]
         if len(pos_parts) >= 2:
             robot_original_pos = (pos_parts[0], pos_parts[1])
+
+    # Diff-drive car template: body name="car" with freejoint, no inner robot geom.
+    # Position lives on the body itself rather than the geom.
+    if robot_original_pos is None:
+        car_body = worldbody.find(".//body[@name='car']")
+        if car_body is not None:
+            pos_str = car_body.get('pos', '0 0 0')
+            pos_parts = [float(x) for x in pos_str.split()]
+            if len(pos_parts) >= 2:
+                robot_original_pos = (pos_parts[0], pos_parts[1])
     
     return tree, {
         'walls': walls,
@@ -835,60 +896,47 @@ def generate_environments_from_pairs(
     )
     print(f"[Env {env_id}] Placed {len(obstacles)} obstacles")
 
-    # Add obstacles to XML
+    # Add obstacles to in-memory XML tree (no temp file write — namo_rl-free path).
     add_obstacles_to_xml(worldbody, obstacles, object_half_height=object_half_height)
 
-    # Save intermediate XML with obstacles but no robot/goal (for simulation).
-    # Use the run-specific output directory so concurrent templates cannot overwrite
-    # each other's temporary files before final XMLs are written.
-    os.makedirs(output_dir, exist_ok=True)
-    temp_xml_path = os.path.join(output_dir, f'env_{env_id:04d}_temp.xml')
+    # Build the wavefront snapshot directly from the geometry we already have,
+    # bypassing namo_rl/MuJoCo entirely.
     try:
-        ET.indent(tree, space='  ')
-        tree.write(temp_xml_path, encoding='utf-8', xml_declaration=True)
-        print(f"[Env {env_id}] Temporary XML saved to: {temp_xml_path}")
-    except Exception as e:
-        print(f"[Env {env_id}] Error saving temporary XML: {e}")
-        return 0
-
-    # Create simulation environment from the XML with obstacles and build snapshot
-    try:
-        print(f"[Env {env_id}] Initializing simulation environment...")
-        rl_env_cls = getattr(namo_rl, "RLEnvironment")
-        env = rl_env_cls(temp_xml_path, namo_config_path, visualize=False)
-
-        exporter = WavefrontSnapshotExporter(
-            env, resolution=resolution,
-            robot_half_extent_override=load_robot_half_extent_from_namo_config(namo_config_path),
+        robot_half_extent = load_robot_half_extent_from_namo_config(namo_config_path)
+        if robot_half_extent is None:
+            robot_half_extent = (robot_size, robot_size)
+        rx, ry, rtheta = robot_original_pos[0], robot_original_pos[1], 0.0
+        static_objects, movable_templates, movable_instances = _build_geometry_from_placements(
+            walls, obstacles, robot_pose=(rx, ry, rtheta), goal_pose=None,
         )
-
+        exporter = WavefrontSnapshotExporter.from_geometry(
+            bounds=bounds,
+            robot_half_extent=robot_half_extent,
+            static_objects=static_objects,
+            movable_templates=movable_templates,
+            movable_instances=movable_instances,
+            robot_pose=(rx, ry, rtheta),
+            goal_pose=None,
+            resolution=resolution,
+        )
+        # xml_path is metadata only; pass the (not-yet-written) per-pair path stub.
         snapshot = exporter.build_snapshot(
-            xml_path=temp_xml_path,
+            xml_path=template_xml_path,
             config_path=namo_config_path,
             goal_radius=0.15,
             goals_per_region=0,
             rng=rng,
         )
-
         region_map = snapshot.region_map
         region_labels = snapshot.region_labels
         adjacency = snapshot.adjacency
         dynamic_grid = snapshot.dynamic_grid
-
         print(f"[Env {env_id}] Built wavefront snapshot with {len(region_labels)} regions")
-
     except Exception as e:
         print(f"[Env {env_id}] Error building wavefront snapshot: {e}")
         import traceback
         traceback.print_exc()
-        if os.path.exists(temp_xml_path):
-            os.remove(temp_xml_path)
         return 0
-    finally:
-        # If we crashed or exited early without cleaning up, do it here if we didn't succeed
-        # But wait, we need the file for the next step.
-        # So we can't put a finally block here that deletes the file.
-        pass
 
     # Generate all (robot, goal) pairs
     try:
@@ -908,60 +956,55 @@ def generate_environments_from_pairs(
         )
     except Exception as e:
         print(f"[Env {env_id}] Error placing robot/goal: {e}")
-        if os.path.exists(temp_xml_path):
-            os.remove(temp_xml_path)
         return 0
 
     if not placements:
         print(f"[Env {env_id}] No valid (robot,goal) placements found")
-        if os.path.exists(temp_xml_path):
-            os.remove(temp_xml_path)
         return 0
 
-    # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
 
+    # Serialise the obstacle-augmented tree once; clone in-memory for each pair.
+    ET.indent(tree, space='  ')
     written = 0
-    try:
-        for k, (robot_pos, goal_pos) in enumerate(placements):
-            try:
-                # Re-parse the temp XML for each pair to keep obstacles identical
-                tree_final = ET.parse(temp_xml_path)
-                root_final = tree_final.getroot()
-                worldbody_final = root_final.find('worldbody')
-                if worldbody_final is None:
-                    print(f"[Env {env_id}] Error: No worldbody in final XML for pair {k}")
-                    continue
-
-                update_robot_xy_in_xml(worldbody_final, robot_pos[0], robot_pos[1])
-
-                goal_site_final = worldbody_final.find(".//site[@name='goal']")
-                if goal_site_final is not None:
-                    goal_site_final.set('pos', f'{goal_pos[0]} {goal_pos[1]} 0.0')
-                    goal_site_final.set('size', str(goal_size))
-                else:
-                    # if robot was present but goal missing, add site
-                    ET.SubElement(
-                        worldbody_final, 'site',
-                        name='goal',
-                        type='sphere',
-                        pos=f'{goal_pos[0]} {goal_pos[1]} 0.0',
-                        size=str(goal_size),
-                        rgba='1 0 0 0.5'
-                    )
-
-                # Save final XML for this pair
-                out_path = os.path.join(output_dir, f'env_{env_id:04d}_pair_{k:03d}.xml')
-                ET.indent(tree_final, space='  ')
-                tree_final.write(out_path, encoding='utf-8', xml_declaration=True)
-                written += 1
-            except Exception as e:
-                print(f"[Env {env_id}] Error saving XML for pair {k}: {e}")
+    for k, (robot_pos, goal_pos) in enumerate(placements):
+        try:
+            # Clone the tree by re-parsing the serialised form (cheap, no disk).
+            import io
+            buf = io.BytesIO()
+            tree.write(buf, encoding='utf-8', xml_declaration=True)
+            buf.seek(0)
+            tree_final = ET.parse(buf)
+            root_final = tree_final.getroot()
+            worldbody_final = root_final.find('worldbody')
+            if worldbody_final is None:
+                print(f"[Env {env_id}] Error: No worldbody in final XML for pair {k}")
                 continue
-    finally:
-        if os.path.exists(temp_xml_path):
-            os.remove(temp_xml_path)
-            
+
+            update_robot_xy_in_xml(worldbody_final, robot_pos[0], robot_pos[1])
+
+            goal_site_final = worldbody_final.find(".//site[@name='goal']")
+            if goal_site_final is not None:
+                goal_site_final.set('pos', f'{goal_pos[0]} {goal_pos[1]} 0.0')
+                goal_site_final.set('size', str(goal_size))
+            else:
+                ET.SubElement(
+                    worldbody_final, 'site',
+                    name='goal',
+                    type='sphere',
+                    pos=f'{goal_pos[0]} {goal_pos[1]} 0.0',
+                    size=str(goal_size),
+                    rgba='1 0 0 0.5'
+                )
+
+            out_path = os.path.join(output_dir, f'env_{env_id:04d}_pair_{k:03d}.xml')
+            ET.indent(tree_final, space='  ')
+            tree_final.write(out_path, encoding='utf-8', xml_declaration=True)
+            written += 1
+        except Exception as e:
+            print(f"[Env {env_id}] Error saving XML for pair {k}: {e}")
+            continue
+
     print(f"[Env {env_id}] Generated {written} environment(s) from {len(placements)} placement(s)")
     return written
 
@@ -1092,9 +1135,10 @@ def main():
         args.goal_size = 0.2
     
     # Check that namo_rl is available
+    # generate_environments_from_pairs (the default code path) is namo_rl-free.
+    # Only warn if it's missing; legacy paths that need it will error at call-time.
     if not NAMO_RL_AVAILABLE:
-        print("Error: namo_rl not available. Please ensure PYTHONPATH includes the namo_cpp build directory.")
-        sys.exit(1)
+        print("Note: namo_rl not on PYTHONPATH. Pure-Python path will be used (no MuJoCo physics validation).")
     
     # Load config
     if args.config:

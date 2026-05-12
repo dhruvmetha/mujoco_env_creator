@@ -149,7 +149,7 @@ class WavefrontSnapshotExporter:
         bounds_sequence = cast(Sequence[float], self._env.get_world_bounds())
         if len(bounds_sequence) != 4:
             raise ValueError("World bounds must contain [xmin, xmax, ymin, ymax]")
-        self.bounds: Tuple[float, float, float, float] = (
+        bounds: Tuple[float, float, float, float] = (
             float(bounds_sequence[0]),
             float(bounds_sequence[1]),
             float(bounds_sequence[2]),
@@ -163,8 +163,8 @@ class WavefrontSnapshotExporter:
         if robot_half_extent_override is not None:
             # Caller supplied authoritative robot footprint (e.g. from namo_config.planning.robot_size).
             # Use it instead of the env's first-geom guess, which under-estimates multi-geom robots.
-            self.robot_half_extent = (float(robot_half_extent_override[0]),
-                                      float(robot_half_extent_override[1]))
+            robot_half_extent = (float(robot_half_extent_override[0]),
+                                 float(robot_half_extent_override[1]))
         else:
             robot_info = object_info["robot"]
             size_x = float(robot_info.get("size_x", 0.25))
@@ -176,11 +176,61 @@ class WavefrontSnapshotExporter:
                 if size_y <= 1e-6:
                     size_y = size_x  # Some environments report a zero Y half-extent for spheres
 
-            self.robot_half_extent = (size_x, size_y)
+            robot_half_extent = (size_x, size_y)
 
-        self.static_objects = self._build_static_objects(object_info)
-        self.movable_templates = self._build_movable_templates(object_info)
+        static_objects = self._build_static_objects(object_info)
+        movable_templates = self._build_movable_templates(object_info)
 
+        self._init_from_data(bounds, robot_half_extent, static_objects, movable_templates)
+        self._preset_robot_pose = None
+        self._preset_goal_pose = None
+        self._preset_movables = None
+
+    @classmethod
+    def from_geometry(
+        cls,
+        *,
+        bounds: Tuple[float, float, float, float],
+        robot_half_extent: Tuple[float, float],
+        static_objects: Sequence["ObjectInstance"],
+        movable_templates: Dict[str, "ObjectTemplate"],
+        movable_instances: Sequence["ObjectInstance"],
+        robot_pose: Tuple[float, float, float],
+        goal_pose: Optional[Tuple[float, float, float]],
+        resolution: Optional[float] = None,
+    ) -> "WavefrontSnapshotExporter":
+        """Construct without a running namo_rl env. Used by env-generation pipelines
+        that already know every piece of geometry (since they just produced it).
+
+        Args:
+            bounds: (xmin, xmax, ymin, ymax) world extents
+            robot_half_extent: (hx, hy) robot footprint half-sizes
+            static_objects: walls/static geom as ObjectInstance list
+            movable_templates: name -> ObjectTemplate (used only for metadata / shape)
+            movable_instances: actual pose-instantiated movable objects for this seed
+            robot_pose: (x, y, theta) start pose
+            goal_pose: (x, y, theta) or None
+        """
+        instance = cls.__new__(cls)
+        instance._env = None
+        instance.resolution = resolution or cls.DEFAULT_RESOLUTION
+        instance._init_from_data(bounds, robot_half_extent, static_objects, movable_templates)
+        instance._preset_robot_pose = robot_pose
+        instance._preset_goal_pose = goal_pose
+        instance._preset_movables = list(movable_instances)
+        return instance
+
+    def _init_from_data(
+        self,
+        bounds: Tuple[float, float, float, float],
+        robot_half_extent: Tuple[float, float],
+        static_objects: Sequence["ObjectInstance"],
+        movable_templates: Dict[str, "ObjectTemplate"],
+    ) -> None:
+        self.bounds = bounds
+        self.robot_half_extent = robot_half_extent
+        self.static_objects = list(static_objects)
+        self.movable_templates = dict(movable_templates)
         self.grid_width = max(1, int((self.bounds[1] - self.bounds[0]) / self.resolution))
         self.grid_height = max(1, int((self.bounds[3] - self.bounds[2]) / self.resolution))
 
@@ -203,21 +253,27 @@ class WavefrontSnapshotExporter:
                               Useful for multi-level exploration where state was set via set_full_state().
         """
 
-        if not use_current_state:
-            self._env.reset()
-        observation = self._env.get_observation()
-        robot_pose = tuple(observation.get("robot_pose", [0.0, 0.0, 0.0]))  # type: ignore
+        if self._env is None:
+            # from_geometry path — caller pre-supplied poses; skip env queries.
+            robot_pose = self._preset_robot_pose
+            goal_pose = self._preset_goal_pose
+            movable_instances = list(self._preset_movables or [])
+        else:
+            if not use_current_state:
+                self._env.reset()
+            observation = self._env.get_observation()
+            robot_pose = tuple(observation.get("robot_pose", [0.0, 0.0, 0.0]))  # type: ignore
 
-        # Always use XML goal for consistency across snapshots
-        goal_pose_xml = self._extract_goal_pose_from_xml(xml_path)
-        goal_pose = goal_pose_xml
+            # Always use XML goal for consistency across snapshots
+            goal_pose_xml = self._extract_goal_pose_from_xml(xml_path)
+            goal_pose = goal_pose_xml
 
-        if goal_pose is None:
-            # Fallback to env goal only if XML goal not found
-            goal_pose_env = tuple(self._env.get_robot_goal()) if hasattr(self._env, "get_robot_goal") else None
-            goal_pose = goal_pose_env
+            if goal_pose is None:
+                # Fallback to env goal only if XML goal not found
+                goal_pose_env = tuple(self._env.get_robot_goal()) if hasattr(self._env, "get_robot_goal") else None
+                goal_pose = goal_pose_env
 
-        movable_instances = self._instantiate_movable_objects(observation)
+            movable_instances = self._instantiate_movable_objects(observation)
 
         grids = self._build_grids(self.static_objects, movable_instances)
 
