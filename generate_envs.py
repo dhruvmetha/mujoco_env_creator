@@ -333,7 +333,7 @@ def add_obstacles_to_xml(
             condim='4',
             pos=f"{obs['pos'][0]} {obs['pos'][1]} {z}",
             euler=f"0 0 {obs['rotation']}",
-            friction='0.0 0.005 0.001',
+            friction='0.5 0.005 0.001',
             rgba='1 1 0 1',
             size=f"{obs['size'][0]} {obs['size'][1]} {z}",
             type='box',
