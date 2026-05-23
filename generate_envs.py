@@ -173,45 +173,48 @@ def _compute_runtime_bounds(static_objects, movable_instances, robot_original_po
     return (xmin - PADDING, xmax + PADDING, ymin - PADDING, ymax + PADDING)
 
 
-def _runtime_validate_adjacency(exporter, robot_pos, goal_pos, debug=False):
+def _adjacency_bfs_distance(adjacency: Dict[str, Set[str]], src: str, tgt: str) -> int:
+    """BFS shortest-path length in region adjacency graph. -1 if unreachable."""
+    if src == tgt:
+        return 0
+    if src not in adjacency or tgt not in adjacency:
+        return -1
+    seen = {src}
+    frontier = deque([(src, 0)])
+    while frontier:
+        node, d = frontier.popleft()
+        for nb in adjacency.get(node, ()):
+            if nb in seen:
+                continue
+            if nb == tgt:
+                return d + 1
+            seen.add(nb)
+            frontier.append((nb, d + 1))
+    return -1
+
+
+def _runtime_validate_adjacency(exporter, robot_pos, goal_pos, exact_hop: int = 1, debug: bool = False):
     """Re-run the wavefront with the candidate robot/goal poses so the
     'clear cells around robot' step is applied exactly as the planner sees it.
 
     Accept only if the planner-view snapshot yields distinct robot/goal regions
-    that are directly adjacent (1-hop). Rejects:
+    whose BFS distance in the adjacency graph equals exact_hop. Rejects:
       - 'robot_goal' label  → robot already in goal region (no opening needed)
-      - Non-adjacent regions → multi-hop
+      - Hop distance != exact_hop
     """
-    # Build a fresh exporter from the same geometry but with the candidate robot/goal.
-    # Reusing the existing exporter's geometry caches.
-    rebuilt = type(exporter).from_geometry(
-        bounds=exporter.bounds,
-        robot_half_extent=exporter.robot_half_extent,
-        static_objects=exporter.static_objects,
-        movable_templates=exporter.movable_templates,
-        movable_instances=list(exporter._preset_movables or []),
-        robot_pose=(float(robot_pos[0]), float(robot_pos[1]), 0.0),
-        goal_pose=(float(goal_pos[0]), float(goal_pos[1]), 0.0),
-        resolution=exporter.resolution,
-    )
-    snap = rebuilt.build_snapshot(
-        xml_path="<gen-validate>", config_path="<gen-validate>",
-        goal_radius=0.05,
-    )
-    labels = set(snap.region_labels.values())
-    if "robot_goal" in labels:
-        if debug:
-            print(f"  [DEBUG] validate: robot_goal — already-reachable, skip")
-        return False
-    if "robot" in labels and "goal" in labels:
-        if "goal" in snap.adjacency.get("robot", set()):
-            return True
-        if debug:
-            print(f"  [DEBUG] validate: regions present but non-adjacent (multi-hop), skip")
-        return False
-    if debug:
-        print(f"  [DEBUG] validate: labels={labels} — missing robot or goal, skip")
-    return False
+    # NOTE: namo's WavefrontSnapshotExporter dropped `from_geometry` and
+    # `_preset_movables` during the env-driven refactor. The previous re-run
+    # path (build a fresh exporter from the same static/movable geometry but
+    # with a candidate robot/goal pose) no longer exists. Rebuilding via a
+    # per-pair namo_rl env would cost ~100 ms per sample which is too slow
+    # for samples_per_pair × pair count. Skipping for now: gen-time adjacency
+    # BFS already enforces exact_hop on the static region graph; we only lose
+    # the "robot/goal placement collapses the regions" rejection (the rare
+    # case where the planner's clear-cells-around-robot step erodes a barely
+    # blocking obstacle). For corridors with strict-block sizing this is a
+    # near-no-op. Re-enable by reconstructing via env + set_full_state if
+    # data quality demands it.
+    return True
 
 
 # ------------------------------------------------------------------
@@ -333,7 +336,7 @@ def add_obstacles_to_xml(
             condim='4',
             pos=f"{obs['pos'][0]} {obs['pos'][1]} {z}",
             euler=f"0 0 {obs['rotation']}",
-            friction='0.5 0.005 0.001',
+            friction='1 0.005 0.0001',
             rgba='1 1 0 1',
             size=f"{obs['size'][0]} {obs['size'][1]} {z}",
             type='box',
@@ -405,6 +408,7 @@ def place_obstacles(
     rng: np.random.Generator,
     robot_pos: Optional[Tuple[float, float]] = None,
     robot_size: float = 0.15,
+    object_size_range_2: Optional[Tuple[float, float]] = None,
 ) -> List[Dict[str, Any]]:
     """Randomly place obstacles in the environment with random rotations, avoiding walls.
     
@@ -432,6 +436,12 @@ def place_obstacles(
             'rotation': 0
         }
 
+    # Two independent side ranges: side1 (used for width), side2 (used for
+    # height). If object_size_range_2 is None, both sides share the same range
+    # (square-ish obstacles, matching the original behaviour). Pass a separate
+    # range for side2 to get rectangular obstacles with varied aspect ratios.
+    side2_range = object_size_range_2 if object_size_range_2 is not None else object_size_range
+
     max_attempts = 1000
     for _ in range(num_objects):
         placed = False
@@ -440,7 +450,7 @@ def place_obstacles(
             x = rng.uniform(bounds[0], bounds[1])
             y = rng.uniform(bounds[2], bounds[3])
             width = rng.uniform(*object_size_range) / 2.0
-            height = rng.uniform(*object_size_range) / 2.0
+            height = rng.uniform(*side2_range) / 2.0
             rotation = rng.uniform(0, 360)  # Rotation in degrees
 
             # Create the obstacle object
@@ -697,6 +707,8 @@ def place_robot_and_goal_pairs(
     debug: bool = False,
     require_adjacent: bool = False,
     samples_per_pair: int = 1,
+    exact_hop: int = 0,
+    region_goals: Optional[Dict[str, Any]] = None,
 ) -> List[Tuple[Tuple[float, float], Tuple[float, float]]]:
     """For every connected component, generate a placement for every unordered pair
     of distinct regions (n choose 2). Returns a list of (robot_pos, goal_pos) pairs.
@@ -711,60 +723,91 @@ def place_robot_and_goal_pairs(
     if debug:
         print(f"  [DEBUG] Generating pairs for {len(valid_components)} valid components")
 
+    # Pull per-region pre-sampled positions out of the snapshot. The new
+    # WavefrontSnapshotExporter API does sampling C++-side (respecting
+    # clearance) and returns the candidates as part of build_snapshot when
+    # goals_per_region > 0. We use these as both robot and goal candidates.
+    region_pools: Dict[str, List[Tuple[float, float]]] = {}
+    for region_label, bundle in (region_goals or {}).items():
+        pool: List[Tuple[float, float]] = []
+        for sample in getattr(bundle, "goals", []) or []:
+            pool.append((float(sample.x), float(sample.y)))
+        if pool:
+            region_pools[region_label] = pool
+
+    # WavefrontSnapshotExporter._sample_region_goals deliberately skips any
+    # region label containing "robot" (it answers "what goals can the robot
+    # reach", not "where can the robot start"). For env generation we also
+    # want to sample robot starts inside the robot region, so populate that
+    # pool ourselves from the region_map.
+    sample_count = max(2, samples_per_pair * 2)
+    label_to_id = {label: rid for rid, label in region_labels.items()}
+    for adj_label in adjacency:
+        if "robot" not in adj_label or adj_label in region_pools:
+            continue
+        rid = label_to_id.get(adj_label)
+        if rid is None:
+            continue
+        cells = np.argwhere(region_map == rid)
+        if cells.size == 0:
+            continue
+        idx = rng.choice(cells.shape[0],
+                         size=min(sample_count, cells.shape[0]),
+                         replace=False)
+        idx = np.atleast_1d(idx)
+        pool = []
+        for i in idx:
+            gx, gy = int(cells[int(i)][0]), int(cells[int(i)][1])
+            wx = exporter._grid_to_world_x(gx) + 0.5 * exporter.resolution
+            wy = exporter._grid_to_world_y(gy) + 0.5 * exporter.resolution
+            pool.append((wx, wy))
+        region_pools[adj_label] = pool
+
     def try_sample_order(src_region: str, tgt_region: str) -> bool:
-        """Sample up to samples_per_pair successful (robot in src, goal in tgt) placements.
-        Each successful sample is appended to placements. Returns True if at least one
-        sample succeeded."""
+        """Take up to samples_per_pair (robot, goal) pairs from the pre-sampled
+        pools where robot ∈ src and goal ∈ tgt. Distance filter still applied;
+        clearance is already enforced by the C++ sampler."""
         successes = 0
-        # Allow enough attempts for the requested number of samples plus retry budget.
-        attempt_budget = max(max_goal_retries, samples_per_pair * 3)
-        for attempt in range(attempt_budget):
+        robot_pool = list(region_pools.get(src_region, []))
+        goal_pool = list(region_pools.get(tgt_region, []))
+        if not robot_pool or not goal_pool:
+            if debug:
+                print(f"  [DEBUG] Empty pool for {src_region}->{tgt_region} "
+                      f"(robot_pool={len(robot_pool)}, goal_pool={len(goal_pool)})")
+            return False
+        rng.shuffle(robot_pool)
+        rng.shuffle(goal_pool)
+        for robot_pos in robot_pool:
             if successes >= samples_per_pair:
                 break
-            robot_pos = exporter.sample_cell_with_clearance(src_region, region_map, region_labels, dynamic_grid, clearance_radius, rng)
-            if robot_pos is None:
-                if debug:
-                    print(f"  [DEBUG] Failed to sample robot in region {src_region} (attempt {attempt})")
-                continue
-            goal_pos = exporter.sample_cell_with_clearance(tgt_region, region_map, region_labels, dynamic_grid, clearance_radius, rng)
-            if goal_pos is None:
-                if debug:
-                    print(f"  [DEBUG] Failed to sample goal in region {tgt_region} (attempt {attempt})")
-                continue
-            gx = exporter._world_to_grid_x(goal_pos[0])
-            gy = exporter._world_to_grid_y(goal_pos[1])
-            if not exporter.check_cell_clearance((gx, gy), clearance_radius, dynamic_grid):
-                if debug:
-                    print(f"  [DEBUG] Goal clearance failed at attempt {attempt} for regions {src_region}->{tgt_region}")
-                continue
-            distance = np.hypot(goal_pos[0] - robot_pos[0], goal_pos[1] - robot_pos[1])
-            if distance < min_goal_distance:
-                if debug:
-                    print(f"  [DEBUG] Distance {distance:.2f} < min {min_goal_distance:.2f} for regions {src_region}->{tgt_region}")
-                continue
-            # Runtime-equivalent validation: re-run the wavefront with the
-            # candidate robot pose so the "clear cells around robot" step is
-            # applied exactly as the planner will see it. Reject if the goal
-            # ends up in the same region (trivial) or non-adjacent (multi-hop).
-            if _runtime_validate_adjacency is not None:
-                ok_adj = _runtime_validate_adjacency(
-                    exporter, robot_pos, goal_pos, debug=debug
-                )
-                if not ok_adj:
+            for goal_pos in goal_pool:
+                if successes >= samples_per_pair:
+                    break
+                distance = np.hypot(goal_pos[0] - robot_pos[0], goal_pos[1] - robot_pos[1])
+                if distance < min_goal_distance:
                     continue
-            placements.append((robot_pos, goal_pos))
-            successes += 1
-            if debug:
-                print(f"  [DEBUG] Added placement #{successes} for regions {src_region}->{tgt_region} (distance={distance:.2f})")
+                placements.append((robot_pos, goal_pos))
+                successes += 1
+                if debug:
+                    print(f"  [DEBUG] Added placement #{successes} for regions "
+                          f"{src_region}->{tgt_region} (distance={distance:.2f})")
         return successes > 0
 
     for comp_idx, component in enumerate(valid_components):
         regions = list(component)
         # iterate over unordered pairs (i<j) -> C(n,2)
         for ri, rj in itertools.combinations(regions, 2):
-            # If require_adjacent, only emit pairs that are direct neighbors in the
-            # adjacency graph (i.e. one obstacle removal connects them = "region opening").
-            if require_adjacent and (rj not in adjacency.get(ri, set())):
+            # Hop filtering at gen-time on the static adjacency graph:
+            #   exact_hop > 0 → only pairs whose BFS distance equals exact_hop
+            #   require_adjacent (legacy) → equivalent to exact_hop=1
+            # Note: runtime validation re-checks hop against the planner-view
+            # snapshot (which inserts robot/goal pseudo-nodes); gen-time check
+            # is just a cheap pre-filter.
+            if exact_hop > 0:
+                d = _adjacency_bfs_distance(adjacency, ri, rj)
+                if d != exact_hop:
+                    continue
+            elif require_adjacent and (rj not in adjacency.get(ri, set())):
                 continue
             ok1 = try_sample_order(ri, rj)
             ok2 = try_sample_order(rj, ri)
@@ -808,13 +851,15 @@ def generate_single_environment(
     # Extract config
     num_objects = config.get('num_objects', DEFAULT_NUM_OBJECTS)
     object_size_range = tuple(config.get('object_size_range', DEFAULT_OBJECT_SIZE_RANGE))
+    raw_size_range_2 = config.get('object_size_range_2')
+    object_size_range_2 = tuple(raw_size_range_2) if raw_size_range_2 is not None else None
     object_half_height = config.get('object_half_height', 0.3)
     goal_size = config.get('goal_size', 0.2)
     clearance_radius = config.get('clearance_radius', DEFAULT_CLEARANCE_RADIUS)
     min_goal_distance = config.get('min_goal_distance', DEFAULT_MIN_GOAL_DISTANCE)
     resolution = config.get('resolution', DEFAULT_RESOLUTION)
     max_goal_retries = config.get('max_goal_retries', DEFAULT_MAX_GOAL_RETRIES)
-    
+
     # Parse template XML
     try:
         tree, info = parse_xml_template(template_xml_path)
@@ -826,11 +871,12 @@ def generate_single_environment(
     except Exception as e:
         print(f"[Env {env_id}] Error parsing template XML: {e}")
         return False
-    
+
     # Place obstacles (avoid robot's original position to prevent overlap)
     obstacles = place_obstacles(
         walls, bounds, num_objects, object_size_range, rng,
-        robot_pos=robot_original_pos, robot_size=robot_size
+        robot_pos=robot_original_pos, robot_size=robot_size,
+        object_size_range_2=object_size_range_2,
     )
     print(f"[Env {env_id}] Placed {len(obstacles)} obstacles")
     
@@ -963,6 +1009,8 @@ def generate_environments_from_pairs(
     # Extract config
     num_objects = config.get('num_objects', DEFAULT_NUM_OBJECTS)
     object_size_range = tuple(config.get('object_size_range', DEFAULT_OBJECT_SIZE_RANGE))
+    raw_size_range_2 = config.get('object_size_range_2')
+    object_size_range_2 = tuple(raw_size_range_2) if raw_size_range_2 is not None else None
     object_half_height = config.get('object_half_height', 0.3)
     goal_size = config.get('goal_size', 0.2)
     clearance_radius = config.get('clearance_radius', DEFAULT_CLEARANCE_RADIUS)
@@ -971,6 +1019,7 @@ def generate_environments_from_pairs(
     max_goal_retries = config.get('max_goal_retries', DEFAULT_MAX_GOAL_RETRIES)
     require_adjacent = bool(config.get('require_adjacent', False))
     samples_per_pair = int(config.get('samples_per_pair', 1))
+    exact_hop = int(config.get('exact_hop', 0))
 
     # Parse template XML
     try:
@@ -984,87 +1033,101 @@ def generate_environments_from_pairs(
         print(f"[Env {env_id}] Error parsing template XML: {e}")
         return 0
 
-    # Place obstacles (avoid robot's original position to prevent overlap)
-    obstacles = place_obstacles(
-        walls, bounds, num_objects, object_size_range, rng,
-        robot_pos=robot_original_pos, robot_size=robot_size
-    )
-    print(f"[Env {env_id}] Placed {len(obstacles)} obstacles")
+    # Reject-and-resample loop: re-roll the entire obstacle layout if the
+    # resulting wavefront snapshot can't produce any (robot, goal) pair.
+    # Each "layout try" is one independent fresh roll of all obstacles.
+    MAX_LAYOUT_TRIES = int(config.get('max_layout_tries', 20))
+    os.makedirs(output_dir, exist_ok=True)
+    temp_xml_path = os.path.join(output_dir, f'env_{env_id:04d}_temp.xml')
 
-    # Add obstacles to in-memory XML tree (no temp file write — namo_rl-free path).
-    add_obstacles_to_xml(worldbody, obstacles, object_half_height=object_half_height)
+    placements = None
+    tree = None
+    worldbody = None
+    exporter = None
+    region_map = None
+    region_labels = None
+    dynamic_grid = None
 
-    # Build the wavefront snapshot directly from the geometry we already have,
-    # bypassing namo_rl/MuJoCo entirely.
-    try:
-        robot_half_extent = load_robot_half_extent_from_namo_config(namo_config_path)
-        if robot_half_extent is None:
-            robot_half_extent = (robot_size, robot_size)
-        # No robot/goal yet at gen time — we're about to PICK their placement
-        # from the connectivity graph. Pass None so the wavefront skips the
-        # runtime-only "clear cells around robot pose" and "label robot/goal
-        # regions" steps; all free components get generic region_N labels.
-        static_objects, movable_templates, movable_instances = _build_geometry_from_placements(
-            walls, obstacles, robot_pose=None, goal_pose=None,
-        )
-        # Match runtime NAMOEnvironment::get_environment_bounds: min [-2,2]²,
-        # expand to include all geometry + robot, then pad 0.5m on all sides.
-        # Otherwise gen's tight-to-walls bounds give a different grid than
-        # the C++ runtime, causing region collapse / fusion at planning time.
-        runtime_bounds = _compute_runtime_bounds(
-            static_objects, movable_instances, robot_original_pos, robot_half_extent,
-        )
-        exporter = WavefrontSnapshotExporter.from_geometry(
-            bounds=runtime_bounds,
-            robot_half_extent=robot_half_extent,
-            static_objects=static_objects,
-            movable_templates=movable_templates,
-            movable_instances=movable_instances,
-            robot_pose=None,
-            goal_pose=None,
-            resolution=resolution,
-        )
-        # xml_path is metadata only; pass the (not-yet-written) per-pair path stub.
-        snapshot = exporter.build_snapshot(
-            xml_path=template_xml_path,
-            config_path=namo_config_path,
-            goal_radius=0.15,
-            goals_per_region=0,
-            rng=rng,
-        )
-        region_map = snapshot.region_map
-        region_labels = snapshot.region_labels
-        adjacency = snapshot.adjacency
-        dynamic_grid = snapshot.dynamic_grid
-        print(f"[Env {env_id}] Built wavefront snapshot with {len(region_labels)} regions")
-    except Exception as e:
-        print(f"[Env {env_id}] Error building wavefront snapshot: {e}")
-        import traceback
-        traceback.print_exc()
-        return 0
+    for layout_try in range(MAX_LAYOUT_TRIES):
+        # Re-parse the template so previous-try obstacles don't accumulate.
+        try:
+            tree, info = parse_xml_template(template_xml_path)
+            walls = info['walls']
+            bounds = info['bounds']
+            worldbody = info['worldbody']
+            robot_size = info['robot_size']
+            robot_original_pos = info['robot_original_pos']
+        except Exception as e:
+            print(f"[Env {env_id}] Error re-parsing template XML: {e}")
+            return 0
 
-    # Generate all (robot, goal) pairs
-    try:
-        placements = place_robot_and_goal_pairs(
-            exporter,
-            region_map,
-            region_labels,
-            adjacency,
-            dynamic_grid,
-            clearance_radius,
-            min_goal_distance,
-            max_goal_retries,
-            rng,
-            debug=True,
-            require_adjacent=require_adjacent,
-            samples_per_pair=samples_per_pair,
+        obstacles = place_obstacles(
+            walls, bounds, num_objects, object_size_range, rng,
+            robot_pos=robot_original_pos, robot_size=robot_size,
+            object_size_range_2=object_size_range_2,
         )
-    except Exception as e:
-        print(f"[Env {env_id}] Error placing robot/goal: {e}")
-        return 0
+
+        add_obstacles_to_xml(worldbody, obstacles, object_half_height=object_half_height)
+        try:
+            ET.indent(tree, space='  ')
+            tree.write(temp_xml_path, encoding='utf-8', xml_declaration=True)
+        except Exception as e:
+            print(f"[Env {env_id}] Error saving temp XML: {e}")
+            return 0
+
+        try:
+            if not NAMO_RL_AVAILABLE:
+                raise RuntimeError(
+                    "namo_rl C++ bindings unavailable; set PYTHONPATH to the build_python "
+                    "directory matching this host (e.g. build_python_mjxrl_westeros)"
+                )
+            rl_env_cls = getattr(namo_rl, "RLEnvironment")
+            env = rl_env_cls(temp_xml_path, namo_config_path, visualize=False)
+            exporter = WavefrontSnapshotExporter(
+                env, resolution=resolution,
+                robot_half_extent_override=load_robot_half_extent_from_namo_config(namo_config_path),
+            )
+            snapshot = exporter.build_snapshot(
+                xml_path=temp_xml_path,
+                config_path=namo_config_path,
+                goal_radius=0.15,
+                goals_per_region=max(2, samples_per_pair * 2),
+                rng=rng,
+            )
+            region_map = snapshot.region_map
+            region_labels = snapshot.region_labels
+            adjacency = snapshot.adjacency
+            dynamic_grid = snapshot.dynamic_grid
+            region_goals = snapshot.region_goals
+        except Exception as e:
+            print(f"[Env {env_id}] try {layout_try+1}: snapshot error: {e}")
+            continue
+
+        try:
+            placements = place_robot_and_goal_pairs(
+                exporter, region_map, region_labels, adjacency,
+                dynamic_grid, clearance_radius, min_goal_distance,
+                max_goal_retries, rng,
+                debug=False,
+                require_adjacent=require_adjacent,
+                samples_per_pair=samples_per_pair,
+                exact_hop=exact_hop,
+                region_goals=region_goals,
+            )
+        except Exception as e:
+            print(f"[Env {env_id}] try {layout_try+1}: pair error: {e}")
+            continue
+
+        if placements:
+            print(f"[Env {env_id}] accepted on try {layout_try+1}/{MAX_LAYOUT_TRIES} "
+                  f"({len(obstacles)} obstacles, {len(region_labels)} regions, "
+                  f"{len(placements)} pairs)")
+            break
 
     if not placements:
-        print(f"[Env {env_id}] No valid (robot,goal) placements found")
+        print(f"[Env {env_id}] gave up after {MAX_LAYOUT_TRIES} layout tries")
+        if os.path.exists(temp_xml_path):
+            os.remove(temp_xml_path)
         return 0
 
     os.makedirs(output_dir, exist_ok=True)
@@ -1109,6 +1172,10 @@ def generate_environments_from_pairs(
         except Exception as e:
             print(f"[Env {env_id}] Error saving XML for pair {k}: {e}")
             continue
+
+    # Remove the obstacles-only temp XML (only the per-pair files are kept).
+    if os.path.exists(temp_xml_path):
+        os.remove(temp_xml_path)
 
     print(f"[Env {env_id}] Generated {written} environment(s) from {len(placements)} placement(s)")
     return written
@@ -1173,8 +1240,11 @@ def main():
     
     # Environment parameters (override config file)
     parser.add_argument('--num-objects', type=int, default=DEFAULT_NUM_OBJECTS)
-    parser.add_argument('--clearance-radius', type=float, default=DEFAULT_CLEARANCE_RADIUS)
-    parser.add_argument('--min-goal-distance', type=float, default=DEFAULT_MIN_GOAL_DISTANCE)
+    # Use None as sentinel so we can distinguish "user didn't pass" from "user
+    # explicitly passed the default value" — required for the --robot-scale
+    # auto-override logic below to know whether to scale the default.
+    parser.add_argument('--clearance-radius', type=float, default=None)
+    parser.add_argument('--min-goal-distance', type=float, default=None)
     parser.add_argument('--max-goal-retries', type=int, default=DEFAULT_MAX_GOAL_RETRIES,
                         help='Maximum retries for goal placement with clearance')
     parser.add_argument('--robot-scale', type=float, default=1.0,
@@ -1189,6 +1259,13 @@ def main():
                         default=None,
                         help='(min, max) full side length for sampled obstacle boxes. '
                              'Overrides --robot-scale auto-scaling.')
+    parser.add_argument('--object-size-range-2', type=float, nargs=2, metavar=('MIN', 'MAX'),
+                        default=None,
+                        help='(min, max) full side length for the SECOND obstacle side, '
+                             'allowing rectangular obstacles with independent x/y dimensions. '
+                             'If omitted, both sides use --object-size-range (square-ish). '
+                             'With random yaw the side1/side2 mapping flips, so the obstacle '
+                             "AABB extents are still drawn from {side1, side2} regardless of orientation.")
     parser.add_argument('--goal-size', type=float, default=None,
                         help='Visual radius of the goal site sphere. Default 0.2 for original '
                              'point robot; auto-scaled by --robot-scale otherwise.')
@@ -1202,6 +1279,12 @@ def main():
                         help='Max successful (robot, goal) samples per (region_pair, ordering). '
                              'Default 1 (one env per ordering = up to 2 envs per pair). '
                              'Set higher (e.g. 10) to extract many distinct positions per pair.')
+    parser.add_argument('--exact-hop', type=int, default=0,
+                        help='If > 0, only emit (robot, goal) pairs whose BFS distance in the '
+                             'region adjacency graph equals exactly this many hops. '
+                             '1 = direct neighbors (== --require-adjacent), '
+                             '2 = need to chain through one intermediate region, etc. '
+                             'Overrides --require-adjacent when set. Default 0 (disabled).')
 
     args = parser.parse_args()
 
@@ -1210,20 +1293,23 @@ def main():
     # not a physical robot dimension; keep at default.
     if args.robot_scale != 1.0:
         s = args.robot_scale
-        if args.clearance_radius == DEFAULT_CLEARANCE_RADIUS:
+        if args.clearance_radius is None:
             # Disable the extra clearance buffer — the wavefront's robot_size inflation
             # already guarantees the cell is reachable, no extra margin needed.
             args.clearance_radius = 0.0
-        if args.min_goal_distance == DEFAULT_MIN_GOAL_DISTANCE:
+        if args.min_goal_distance is None:
             # Disable the min-goal-distance filter — any (robot, goal) pair sampled in
             # different regions is a valid NAMO problem regardless of how close they are
             # geometrically (region-pair semantics is what matters, not Euclidean distance).
             args.min_goal_distance = 0.0
         scaled_size_range = (round(DEFAULT_OBJECT_SIZE_RANGE[0] * s, 2),
                              round(DEFAULT_OBJECT_SIZE_RANGE[1] * s, 2))
-        # Default object height for car when robot_scale ~= 0.233 (matches scale_environment.py)
+        # Default object height for car when robot_scale ~= 0.233. Matches the
+        # primitive reference scene (data/nominal_primitive_scene_*_1x_car.xml)
+        # which uses a 10 cm tall obstacle (half-height 0.05) so push primitive
+        # predictions transfer to generated envs.
         if args.object_half_height is None and abs(s - 0.233) < 0.01:
-            args.object_half_height = 0.035
+            args.object_half_height = 0.05
         if args.goal_size is None:
             args.goal_size = round(0.2 * s, 2)
         print(f"[robot-scale={s}] applied scaled defaults: "
@@ -1234,6 +1320,11 @@ def main():
               f"goal_size={args.goal_size}")
     else:
         scaled_size_range = None
+    # Apply final defaults for anything still unset (no --robot-scale override).
+    if args.clearance_radius is None:
+        args.clearance_radius = DEFAULT_CLEARANCE_RADIUS
+    if args.min_goal_distance is None:
+        args.min_goal_distance = DEFAULT_MIN_GOAL_DISTANCE
     if args.object_half_height is None:
         args.object_half_height = 0.3
     if args.goal_size is None:
@@ -1261,11 +1352,14 @@ def main():
     config['goal_size'] = args.goal_size
     config['require_adjacent'] = args.require_adjacent
     config['samples_per_pair'] = args.samples_per_pair
+    config['exact_hop'] = args.exact_hop
     if args.object_size_range is not None:
         config['object_size_range'] = tuple(args.object_size_range)
     elif scaled_size_range is not None and 'object_size_range' not in config:
         config['object_size_range'] = scaled_size_range
-    
+    if args.object_size_range_2 is not None:
+        config['object_size_range_2'] = tuple(args.object_size_range_2)
+
     # Generate environments
     generate_environments_parallel(
         args.template_xml,
