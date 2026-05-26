@@ -43,6 +43,7 @@ WALL_HALF_HEIGHT_M = 0.05
 # User-requested inner-wall thickness.
 INNER_WALL_FULL_WIDTH_M = 0.057
 INNER_WALL_HALF_WIDTH_M = INNER_WALL_FULL_WIDTH_M / 2.0
+DEFAULT_MAX_GAP_LENGTH_M = 1.5 * (min(REAL_WORKSPACE_WIDTH_M, REAL_WORKSPACE_HEIGHT_M) / 2.0)
 
 FLOOR_FRICTION = "0.5 0.005 0.001"
 WALL_FRICTION = "1.0 0.005 0.0001"
@@ -100,8 +101,12 @@ class ResolvedConfig:
     inflation_context: str
     required_gap_length_m: float
     min_gap_length_m: float
+    max_gap_length_m: float
     min_segment_length_m: float
     corner_margin_m: float
+    boundary_gap_fraction: float
+    boundary_gap_max_offset_m: float
+    boundary_gap_count: int
     straight_wall_fraction: float
     straight_wall_mode: str
     straight_wall_count: int
@@ -288,10 +293,38 @@ def parse_args() -> argparse.Namespace:
         help="Minimum remaining wall length on each side of the carved gap.",
     )
     parser.add_argument(
+        "--max_gap_length_m",
+        type=float,
+        default=None,
+        help=(
+            "Maximum carved doorway gap length in meters. The effective value "
+            "is clamped to be at least min_gap_length_m."
+        ),
+    )
+    parser.add_argument(
         "--corner_margin_m",
         type=float,
         default=None,
         help="Corner exclusion margin when sampling boundary points.",
+    )
+    parser.add_argument(
+        "--boundary_gap_fraction",
+        type=float,
+        default=None,
+        help=(
+            "Fraction of logical inner walls whose carved gap is biased toward "
+            "one wall endpoint."
+        ),
+    )
+    parser.add_argument(
+        "--boundary_gap_max_offset_m",
+        type=float,
+        default=None,
+        help=(
+            "Maximum allowed offset between a boundary-biased gap and the chosen "
+            "wall endpoint. Use 0.0 to let the gap reach the endpoint whenever "
+            "other constraints allow it."
+        ),
     )
     parser.add_argument(
         "--straight_wall_fraction",
@@ -335,7 +368,10 @@ def resolve_config(args: argparse.Namespace) -> ResolvedConfig:
         "inflation_context": "navigation",
         "min_gap_length_m": None,
         "min_segment_length_m": None,
+        "max_gap_length_m": DEFAULT_MAX_GAP_LENGTH_M,
         "corner_margin_m": INNER_WALL_HALF_WIDTH_M,
+        "boundary_gap_fraction": 0.0,
+        "boundary_gap_max_offset_m": 0.0,
         "straight_wall_fraction": 0.0,
         "straight_wall_mode": "mixed",
         "max_layout_attempts": 200,
@@ -406,6 +442,14 @@ def resolve_config(args: argparse.Namespace) -> ResolvedConfig:
     if corner_margin_m * 2.0 >= min(REAL_WORKSPACE_WIDTH_M, REAL_WORKSPACE_HEIGHT_M):
         raise ValueError("corner_margin_m is too large for the fixed workspace")
 
+    boundary_gap_fraction = float(merged["boundary_gap_fraction"])
+    if not 0.0 <= boundary_gap_fraction <= 1.0:
+        raise ValueError("boundary_gap_fraction must be between 0.0 and 1.0")
+
+    boundary_gap_max_offset_m = float(merged["boundary_gap_max_offset_m"])
+    if boundary_gap_max_offset_m < 0.0:
+        raise ValueError("boundary_gap_max_offset_m must be non-negative")
+
     straight_wall_fraction = float(merged["straight_wall_fraction"])
     if not 0.0 <= straight_wall_fraction <= 1.0:
         raise ValueError("straight_wall_fraction must be between 0.0 and 1.0")
@@ -418,6 +462,9 @@ def resolve_config(args: argparse.Namespace) -> ResolvedConfig:
         )
 
     total_logical_walls = 2 * int(merged["points_per_side"])
+    boundary_gap_count = int(
+        round(boundary_gap_fraction * total_logical_walls)
+    )
     straight_wall_count = int(
         round(straight_wall_fraction * total_logical_walls)
     )
@@ -456,10 +503,18 @@ def resolve_config(args: argparse.Namespace) -> ResolvedConfig:
     else:
         min_segment_length_m = float(requested_min_segment_length_m)
 
+    requested_max_gap_length_m = merged["max_gap_length_m"]
+    if requested_max_gap_length_m is None:
+        max_gap_length_m = DEFAULT_MAX_GAP_LENGTH_M
+    else:
+        max_gap_length_m = max(min_gap_length_m, float(requested_max_gap_length_m))
+
     if min_gap_length_m <= 0.0:
         raise ValueError("min_gap_length_m must be positive")
-    if min_segment_length_m <= 0.0:
-        raise ValueError("min_segment_length_m must be positive")
+    if max_gap_length_m <= 0.0:
+        raise ValueError("max_gap_length_m must be positive")
+    if min_segment_length_m < 0.0:
+        raise ValueError("min_segment_length_m must be non-negative")
 
     return ResolvedConfig(
         output_dir=output_dir,
@@ -473,8 +528,12 @@ def resolve_config(args: argparse.Namespace) -> ResolvedConfig:
         inflation_context=inflation_context,
         required_gap_length_m=required_gap_length_m,
         min_gap_length_m=min_gap_length_m,
+        max_gap_length_m=max_gap_length_m,
         min_segment_length_m=min_segment_length_m,
         corner_margin_m=corner_margin_m,
+        boundary_gap_fraction=boundary_gap_fraction,
+        boundary_gap_max_offset_m=boundary_gap_max_offset_m,
+        boundary_gap_count=boundary_gap_count,
         straight_wall_fraction=straight_wall_fraction,
         straight_wall_mode=straight_wall_mode,
         straight_wall_count=straight_wall_count,
@@ -746,12 +805,33 @@ def clip_wall_centerline_to_enclosure(
     return clipped
 
 
+def select_boundary_gap_biases(
+    total_walls: int,
+    boundary_gap_count: int,
+    rng: random.Random,
+) -> Dict[int, str]:
+    if boundary_gap_count <= 0 or total_walls <= 0:
+        return {}
+
+    selected_indices = rng.sample(
+        range(1, total_walls + 1),
+        k=min(boundary_gap_count, total_walls),
+    )
+    return {
+        wall_index: rng.choice(("start", "end"))
+        for wall_index in selected_indices
+    }
+
+
 def build_segments_for_pair(
     pair: Tuple[AnchorPoint, AnchorPoint],
     wall_index: int,
     rng: random.Random,
     min_gap_length_m: float,
+    max_gap_length_m: float,
     min_segment_length_m: float,
+    boundary_gap_side: Optional[str] = None,
+    boundary_gap_max_offset_m: float = 0.0,
 ) -> List[WallGeom]:
     raw_point_a, raw_point_b = pair
     (start_x, start_y), (end_x, end_y) = clip_wall_centerline_to_enclosure(
@@ -771,10 +851,11 @@ def build_segments_for_pair(
         )
 
     available_gap_length_m = wall_length_m - 2.0 * min_segment_length_m
-    if available_gap_length_m <= min_gap_length_m + FLOAT_EPS:
+    capped_gap_length_m = min(available_gap_length_m, max_gap_length_m)
+    if capped_gap_length_m <= min_gap_length_m + FLOAT_EPS:
         gap_length_m = min_gap_length_m
     else:
-        gap_length_m = rng.uniform(min_gap_length_m, available_gap_length_m)
+        gap_length_m = rng.uniform(min_gap_length_m, capped_gap_length_m)
 
     gap_start_min_m = min_segment_length_m
     gap_start_max_m = wall_length_m - min_segment_length_m - gap_length_m
@@ -785,6 +866,30 @@ def build_segments_for_pair(
 
     if gap_start_max_m <= gap_start_min_m + FLOAT_EPS:
         gap_start_m = gap_start_min_m
+    elif boundary_gap_side == "start":
+        preferred_gap_start_max_m = min(
+            gap_start_max_m,
+            boundary_gap_max_offset_m,
+        )
+        if preferred_gap_start_max_m <= gap_start_min_m + FLOAT_EPS:
+            gap_start_m = gap_start_min_m
+        else:
+            gap_start_m = rng.uniform(
+                gap_start_min_m,
+                preferred_gap_start_max_m,
+            )
+    elif boundary_gap_side == "end":
+        preferred_gap_start_min_m = max(
+            gap_start_min_m,
+            wall_length_m - gap_length_m - boundary_gap_max_offset_m,
+        )
+        if preferred_gap_start_min_m >= gap_start_max_m - FLOAT_EPS:
+            gap_start_m = gap_start_max_m
+        else:
+            gap_start_m = rng.uniform(
+                preferred_gap_start_min_m,
+                gap_start_max_m,
+            )
     else:
         gap_start_m = rng.uniform(gap_start_min_m, gap_start_max_m)
     gap_end_m = gap_start_m + gap_length_m
@@ -1019,6 +1124,11 @@ def generate_template(config: ResolvedConfig, seed: int) -> str:
         }
         pairs = [*straight_pairs, *pair_side_points(points_by_side, rng)]
         rng.shuffle(pairs)
+        boundary_gap_biases = select_boundary_gap_biases(
+            len(pairs),
+            config.boundary_gap_count,
+            rng,
+        )
 
         wall_geoms: List[WallGeom] = []
         try:
@@ -1029,7 +1139,10 @@ def generate_template(config: ResolvedConfig, seed: int) -> str:
                         wall_index,
                         rng,
                         min_gap_length_m=config.min_gap_length_m,
+                        max_gap_length_m=config.max_gap_length_m,
                         min_segment_length_m=config.min_segment_length_m,
+                        boundary_gap_side=boundary_gap_biases.get(wall_index),
+                        boundary_gap_max_offset_m=config.boundary_gap_max_offset_m,
                     )
                 )
             return build_xml(wall_geoms)
@@ -1057,8 +1170,16 @@ def save_templates(config: ResolvedConfig) -> None:
         f"{config.robot_height_cm:.2f} cm)"
     )
     print(
-        "Effective min gap / min segment: "
-        f"{config.min_gap_length_m:.4f} m / {config.min_segment_length_m:.4f} m"
+        "Effective min / max gap / min segment: "
+        f"{config.min_gap_length_m:.4f} m / "
+        f"{config.max_gap_length_m:.4f} m / "
+        f"{config.min_segment_length_m:.4f} m"
+    )
+    print(
+        "Boundary-biased gaps: "
+        f"{config.boundary_gap_count} of {2 * config.points_per_side} logical walls "
+        f"(fraction={config.boundary_gap_fraction:.3f}, "
+        f"max_offset={config.boundary_gap_max_offset_m:.4f} m)"
     )
     print(
         "Forced straight walls: "

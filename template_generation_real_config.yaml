@@ -14,8 +14,20 @@ inflation_context: navigation
 # The effective gap is max(required_from_inflation, min_gap_length_m).
 min_gap_length_m: 0.08
 
-# Optional. If omitted, the script uses max(0.057, min_gap_length_m / 2).
-# min_segment_length_m: 0.05
+# Maximum doorway gap length. Default here is 1.5x half the shorter workspace dimension:
+# 1.5 * (min(0.49, 0.775) / 2) = 0.3675 m.
+max_gap_length_m: 0.3675
+
+# Minimum remaining wall length on each side of the carved gap.
+# Set to 0.0 to allow gaps that reach a wall endpoint.
+min_segment_length_m: 0.0
+
+# Fraction of logical walls whose gap is biased toward one wall endpoint.
+boundary_gap_fraction: 0.0
+
+# Maximum distance from the chosen endpoint to the nearest edge of the gap.
+# Set to 0.0 to allow endpoint-touching gaps when other constraints allow it.
+boundary_gap_max_offset_m: 0.05
 
 corner_margin_m: 0.03
 
