@@ -836,14 +836,26 @@ def place_robot_and_goal_pairs(
     exact_hop: int = 0,
     region_goals: Optional[Dict[str, Any]] = None,
     min_region_area_m2: float = 0.0,
+    arena_bounds: Optional[Tuple[float, float, float, float]] = None,
 ) -> List[Tuple[Tuple[float, float], Tuple[float, float]]]:
     """For every connected component, generate a placement for every unordered pair
     of distinct regions (n choose 2). Returns a list of (robot_pos, goal_pos) pairs.
 
     Each pair is produced by sampling a cell in the first region for the robot and
     a cell in the second region for the goal, checking clearance and distance.
+
+    arena_bounds: (xmin, xmax, ymin, ymax) of the walls' AABB. When provided,
+    sampled positions outside these bounds are rejected. Defensive against
+    the wavefront grid extending past the arena into "outside" free space.
     """
     placements: List[Tuple[Tuple[float, float], Tuple[float, float]]] = []
+
+    def _in_arena(pos):
+        if arena_bounds is None:
+            return True
+        x, y = pos
+        return (arena_bounds[0] <= x <= arena_bounds[1]
+                and arena_bounds[2] <= y <= arena_bounds[3])
 
     components = find_connected_components(adjacency)
     valid_components = [c for c in components if len(c) >= 2]
@@ -873,7 +885,9 @@ def place_robot_and_goal_pairs(
     for region_label, bundle in (region_goals or {}).items():
         pool: List[Tuple[float, float]] = []
         for sample in getattr(bundle, "goals", []) or []:
-            pool.append((float(sample.x), float(sample.y)))
+            p = (float(sample.x), float(sample.y))
+            if _in_arena(p):
+                pool.append(p)
         if pool:
             region_pools[region_label] = pool
 
@@ -893,17 +907,24 @@ def place_robot_and_goal_pairs(
         cells = np.argwhere(region_map == rid)
         if cells.size == 0:
             continue
-        idx = rng.choice(cells.shape[0],
-                         size=min(sample_count, cells.shape[0]),
-                         replace=False)
+        # Oversample so we can keep filling the pool even after dropping
+        # cells whose world coords land outside the arena.
+        oversample = min(cells.shape[0], sample_count * 4)
+        idx = rng.choice(cells.shape[0], size=oversample, replace=False)
         idx = np.atleast_1d(idx)
         pool = []
         for i in idx:
             gx, gy = int(cells[int(i)][0]), int(cells[int(i)][1])
             wx = exporter._grid_to_world_x(gx) + 0.5 * exporter.resolution
             wy = exporter._grid_to_world_y(gy) + 0.5 * exporter.resolution
-            pool.append((wx, wy))
-        region_pools[adj_label] = pool
+            p = (wx, wy)
+            if not _in_arena(p):
+                continue
+            pool.append(p)
+            if len(pool) >= sample_count:
+                break
+        if pool:
+            region_pools[adj_label] = pool
 
     def try_sample_order(src_region: str, tgt_region: str) -> bool:
         """Take up to samples_per_pair (robot, goal) pairs from the pre-sampled
@@ -1256,6 +1277,10 @@ def generate_environments_from_pairs(
                 exact_hop=exact_hop,
                 region_goals=region_goals,
                 min_region_area_m2=min_region_area_m2,
+                # bounds = walls' rotated AABB (set by parse_xml_template). Reject
+                # any sampled robot/goal position outside, so goals can't land in
+                # the "outside-arena" free space that the wavefront grid extends into.
+                arena_bounds=bounds,
             )
         except Exception as e:
             print(f"[Env {env_id}] try {layout_try+1}: pair error: {e}")
