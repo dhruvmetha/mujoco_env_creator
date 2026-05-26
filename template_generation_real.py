@@ -13,13 +13,10 @@ from __future__ import annotations
 
 import argparse
 import math
-import os
 import random
-import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 from xml.dom import minidom
 from xml.etree.ElementTree import Element, SubElement, tostring
 
@@ -31,11 +28,6 @@ DEFAULT_REAL_CONFIG_YAML = REPO_ROOT / "tiny_robot_control" / "config" / "real.y
 DEFAULT_WAVEFRONT_INFLATION_YAML = (
     REPO_ROOT / "tiny_robot_control" / "config" / "wavefront_inflation.yaml"
 )
-DEFAULT_NAMO_CONFIG_YAML = (
-    REPO_ROOT / "namo_cpp" / "config" / "namo_config_complete_skill15_1x.yaml"
-)
-DEFAULT_NAMO_PYTHON_PATH = REPO_ROOT / "namo_cpp" / "python"
-DEFAULT_NAMO_BUILD_PYTHON_PATH = REPO_ROOT / "namo_cpp" / "build_python"
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "generated_templates_real"
 
 
@@ -52,20 +44,11 @@ WALL_HALF_HEIGHT_M = 0.05
 INNER_WALL_FULL_WIDTH_M = 0.057
 INNER_WALL_HALF_WIDTH_M = INNER_WALL_FULL_WIDTH_M / 2.0
 
-
-ROBOT_MASS_KG = 5.0
-ROBOT_FRICTION = "1.0 0.005 0.0001"
 FLOOR_FRICTION = "0.5 0.005 0.001"
 WALL_FRICTION = "1.0 0.005 0.0001"
 WALL_RGBA = "0.8 0.8 0.8 1"
-GOAL_RGBA = "0 1 0 0.5"
-GOAL_RADIUS_M = 0.05
-ACTUATOR_KV = "50"
-ACTUATOR_CTRLRANGE = "-0.5 0.5"
-ACTUATOR_FORCERANGE = "-20 20"
 FLOAT_EPS = 1e-9
 GEOMETRY_SAFETY_MARGIN_M = 1e-6
-MAX_POSE_ATTEMPTS_PER_LAYOUT = 20
 
 INFLATION_CONTEXTS = {
     "navigation",
@@ -112,7 +95,6 @@ class ResolvedConfig:
     start_seed: int
     robot_config_yaml: Path
     wavefront_inflation_yaml: Path
-    namo_config_yaml: Path
     robot_width_cm: float
     robot_height_cm: float
     inflation_context: str
@@ -128,9 +110,6 @@ class ResolvedConfig:
 
 class LayoutGenerationError(RuntimeError):
     """Raised when a valid wall layout cannot be generated."""
-
-
-_NAMO_RL_MODULE = None
 
 
 def _safe_float(value: Any, default: float) -> float:
@@ -275,15 +254,6 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--namo_config_yaml",
-        type=str,
-        default=None,
-        help=(
-            "NAMO config used for the unified reachability rejection check. "
-            f"Default: {DEFAULT_NAMO_CONFIG_YAML}"
-        ),
-    )
-    parser.add_argument(
         "--robot_width_cm",
         type=float,
         default=None,
@@ -360,7 +330,6 @@ def resolve_config(args: argparse.Namespace) -> ResolvedConfig:
         "start_seed": 0,
         "robot_config_yaml": str(DEFAULT_REAL_CONFIG_YAML),
         "wavefront_inflation_yaml": str(DEFAULT_WAVEFRONT_INFLATION_YAML),
-        "namo_config_yaml": str(DEFAULT_NAMO_CONFIG_YAML),
         "robot_width_cm": None,
         "robot_height_cm": None,
         "inflation_context": "navigation",
@@ -402,7 +371,6 @@ def resolve_config(args: argparse.Namespace) -> ResolvedConfig:
     output_dir = resolve_merged_path("output_dir")
     robot_config_yaml = resolve_merged_path("robot_config_yaml")
     wavefront_inflation_yaml = resolve_merged_path("wavefront_inflation_yaml")
-    namo_config_yaml = resolve_merged_path("namo_config_yaml")
 
     robot_width_cm = merged["robot_width_cm"]
     robot_height_cm = merged["robot_height_cm"]
@@ -500,7 +468,6 @@ def resolve_config(args: argparse.Namespace) -> ResolvedConfig:
         start_seed=int(merged["start_seed"]),
         robot_config_yaml=robot_config_yaml,
         wavefront_inflation_yaml=wavefront_inflation_yaml,
-        namo_config_yaml=namo_config_yaml,
         robot_width_cm=float(robot_width_cm),
         robot_height_cm=float(robot_height_cm),
         inflation_context=inflation_context,
@@ -779,82 +746,6 @@ def clip_wall_centerline_to_enclosure(
     return clipped
 
 
-def ensure_namo_rl_import():
-    global _NAMO_RL_MODULE
-    if _NAMO_RL_MODULE is not None:
-        return _NAMO_RL_MODULE
-
-    candidate_paths = [
-        os.environ.get("NAMO_RL_BUILD_PYTHON_PATH"),
-        str(DEFAULT_NAMO_BUILD_PYTHON_PATH),
-        os.environ.get("NAMO_PYTHON_PATH"),
-        str(DEFAULT_NAMO_PYTHON_PATH),
-    ]
-    for raw_path in candidate_paths:
-        if not raw_path:
-            continue
-        resolved = str(Path(raw_path).expanduser().resolve())
-        if resolved not in sys.path and Path(resolved).exists():
-            sys.path.insert(0, resolved)
-
-    try:
-        import namo_rl  # type: ignore
-    except ImportError as exc:
-        raise RuntimeError(
-            "Could not import namo_rl for unified reachability validation. "
-            "Expected local paths under namo_cpp/build_python and namo_cpp/python "
-            "or overrides via NAMO_RL_BUILD_PYTHON_PATH / NAMO_PYTHON_PATH."
-        ) from exc
-
-    _NAMO_RL_MODULE = namo_rl
-    return _NAMO_RL_MODULE
-
-
-def validate_robot_goal_reachability(
-    env: Any,
-    robot_position: Tuple[float, float],
-    goal_position: Tuple[float, float],
-) -> bool:
-    env.reset()
-    env.set_robot_pose(robot_position[0], robot_position[1], 0.0)
-    env.set_robot_goal_silent(goal_position[0], goal_position[1], 0.0)
-    return bool(env.is_robot_goal_reachable())
-
-
-def create_validation_environment(
-    xml_text: str,
-    config: ResolvedConfig,
-) -> Tuple[Any, str]:
-    namo_rl = ensure_namo_rl_import()
-    temp_handle = tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".xml",
-        prefix="real_template_validate_",
-        delete=False,
-        encoding="utf-8",
-    )
-    temp_xml_path = temp_handle.name
-    try:
-        temp_handle.write(xml_text)
-    finally:
-        temp_handle.close()
-
-    try:
-        env = namo_rl.RLEnvironment(
-            temp_xml_path,
-            str(config.namo_config_yaml),
-            visualize=False,
-        )
-    except Exception:
-        try:
-            os.remove(temp_xml_path)
-        except OSError:
-            pass
-        raise
-
-    return env, temp_xml_path
-
-
 def build_segments_for_pair(
     pair: Tuple[AnchorPoint, AnchorPoint],
     wall_index: int,
@@ -932,85 +823,6 @@ def build_segments_for_pair(
     return geoms
 
 
-def point_collides_with_rotated_wall(
-    x: float,
-    y: float,
-    radius_m: float,
-    wall: WallGeom,
-) -> bool:
-    angle_rad = math.radians(wall.rotation_deg)
-    dx = x - wall.x
-    dy = y - wall.y
-
-    cos_angle = math.cos(angle_rad)
-    sin_angle = math.sin(angle_rad)
-    local_x = dx * cos_angle + dy * sin_angle
-    local_y = -dx * sin_angle + dy * cos_angle
-
-    expanded_x = abs(local_x) - wall.half_length
-    expanded_y = abs(local_y) - wall.half_width
-    outside_x = max(expanded_x, 0.0)
-    outside_y = max(expanded_y, 0.0)
-    return (outside_x * outside_x + outside_y * outside_y) <= radius_m * radius_m
-
-
-def sample_free_point(
-    rng: random.Random,
-    walls: Sequence[WallGeom],
-    clearance_radius_m: float,
-    max_attempts: int,
-) -> Optional[Tuple[float, float]]:
-    x_min = clearance_radius_m
-    x_max = REAL_WORKSPACE_WIDTH_M - clearance_radius_m
-    y_min = clearance_radius_m
-    y_max = REAL_WORKSPACE_HEIGHT_M - clearance_radius_m
-    if x_min >= x_max or y_min >= y_max:
-        return None
-
-    for _ in range(max_attempts):
-        x = rng.uniform(x_min, x_max)
-        y = rng.uniform(y_min, y_max)
-        if any(
-            point_collides_with_rotated_wall(x, y, clearance_radius_m, wall)
-            for wall in walls
-        ):
-            continue
-        return (x, y)
-    return None
-
-
-def sample_robot_and_goal(
-    rng: random.Random,
-    walls: Sequence[WallGeom],
-    robot_clearance_radius_m: float,
-) -> Tuple[Tuple[float, float], Tuple[float, float]]:
-    robot_point = sample_free_point(
-        rng,
-        walls,
-        robot_clearance_radius_m,
-        max_attempts=500,
-    )
-    if robot_point is None:
-        raise LayoutGenerationError("Could not place placeholder robot in free space")
-
-    min_robot_goal_distance_m = max(2.0 * robot_clearance_radius_m, 0.15)
-    for _ in range(500):
-        goal_point = sample_free_point(
-            rng,
-            walls,
-            GOAL_RADIUS_M,
-            max_attempts=50,
-        )
-        if goal_point is None:
-            break
-        dx = goal_point[0] - robot_point[0]
-        dy = goal_point[1] - robot_point[1]
-        if math.hypot(dx, dy) >= min_robot_goal_distance_m:
-            return robot_point, goal_point
-
-    raise LayoutGenerationError("Could not place placeholder goal in free space")
-
-
 def add_common_assets(root: Element) -> None:
     SubElement(
         root,
@@ -1057,7 +869,6 @@ def add_common_assets(root: Element) -> None:
         texture="groundplane",
         texuniform="true",
     )
-    SubElement(asset, "material", name="robot", rgba="1.0 1.0 0.0 1.0")
 
 
 def add_boundary_walls(walls_body: Element) -> None:
@@ -1137,12 +948,7 @@ def add_inner_walls(walls_body: Element, walls: Sequence[WallGeom]) -> None:
         )
 
 
-def build_xml(
-    wall_geoms: Sequence[WallGeom],
-    robot_position: Tuple[float, float],
-    goal_position: Tuple[float, float],
-    robot_radius_m: float,
-) -> str:
+def build_xml(wall_geoms: Sequence[WallGeom]) -> str:
     root = Element("mujoco", model="generated_real_template")
     SubElement(root, "compiler", angle="degree")
     add_common_assets(root)
@@ -1164,55 +970,12 @@ def build_xml(
     add_boundary_walls(walls_body)
     add_inner_walls(walls_body, wall_geoms)
 
-    robot_body = SubElement(worldbody, "body", name="robot")
-    SubElement(robot_body, "joint", name="joint_x", type="slide", pos="0 0 0", axis="1 0 0")
-    SubElement(robot_body, "joint", name="joint_y", type="slide", pos="0 0 0", axis="0 1 0")
-    SubElement(
-        robot_body,
-        "geom",
-        name="robot",
-        type="sphere",
-        pos=f"{robot_position[0]:.6f} {robot_position[1]:.6f} {robot_radius_m:.6f}",
-        size=f"{robot_radius_m:.6f}",
-        mass=f"{ROBOT_MASS_KG:.6f}",
-        friction=ROBOT_FRICTION,
-        condim="4",
-    )
-    SubElement(robot_body, "site", name="sensor_ball")
-
-    SubElement(
-        worldbody,
-        "site",
-        name="goal",
-        type="sphere",
-        pos=f"{goal_position[0]:.6f} {goal_position[1]:.6f} 0.0",
-        size=f"{GOAL_RADIUS_M:.6f}",
-        rgba=GOAL_RGBA,
-    )
-
-    actuator = SubElement(root, "actuator")
-    for axis in ("x", "y"):
-        SubElement(
-            actuator,
-            "velocity",
-            name=f"actuator_{axis}",
-            joint=f"joint_{axis}",
-            kv=ACTUATOR_KV,
-            ctrlrange=ACTUATOR_CTRLRANGE,
-            forcerange=ACTUATOR_FORCERANGE,
-        )
-
     rough_xml = tostring(root, encoding="unicode")
     return minidom.parseString(rough_xml).toprettyxml(indent="  ")
 
 
 def generate_template(config: ResolvedConfig, seed: int) -> str:
     rng = random.Random(seed)
-    placeholder_clearance_radius_m = config.required_gap_length_m / 2.0
-    robot_radius_m = effective_robot_radius_m(
-        config.robot_width_cm,
-        config.robot_height_cm,
-    )
 
     for _ in range(config.max_layout_attempts):
         horizontal_straight_count, vertical_straight_count = random_straight_wall_counts(
@@ -1269,54 +1032,9 @@ def generate_template(config: ResolvedConfig, seed: int) -> str:
                         min_segment_length_m=config.min_segment_length_m,
                     )
                 )
+            return build_xml(wall_geoms)
         except LayoutGenerationError:
             continue
-
-        env = None
-        temp_xml_path = None
-        try:
-            initial_robot_position, initial_goal_position = sample_robot_and_goal(
-                rng,
-                wall_geoms,
-                placeholder_clearance_radius_m,
-            )
-            validation_xml = build_xml(
-                wall_geoms,
-                initial_robot_position,
-                initial_goal_position,
-                robot_radius_m,
-            )
-            env, temp_xml_path = create_validation_environment(validation_xml, config)
-
-            candidate_pairs = [
-                (initial_robot_position, initial_goal_position),
-            ]
-            for _ in range(MAX_POSE_ATTEMPTS_PER_LAYOUT - 1):
-                candidate_pairs.append(
-                    sample_robot_and_goal(
-                        rng,
-                        wall_geoms,
-                        placeholder_clearance_radius_m,
-                    )
-                )
-
-            for robot_position, goal_position in candidate_pairs:
-                if validate_robot_goal_reachability(env, robot_position, goal_position):
-                    return build_xml(
-                        wall_geoms,
-                        robot_position,
-                        goal_position,
-                        robot_radius_m,
-                    )
-        except LayoutGenerationError:
-            continue
-        finally:
-            env = None
-            if temp_xml_path is not None:
-                try:
-                    os.remove(temp_xml_path)
-                except OSError:
-                    pass
 
     raise LayoutGenerationError(
         "Failed to generate a valid layout after "
@@ -1327,7 +1045,6 @@ def generate_template(config: ResolvedConfig, seed: int) -> str:
 
 def save_templates(config: ResolvedConfig) -> None:
     config.output_dir.mkdir(parents=True, exist_ok=True)
-    ensure_namo_rl_import()
 
     print(
         "Generating templates with fixed workspace "
@@ -1348,7 +1065,6 @@ def save_templates(config: ResolvedConfig) -> None:
         f"{config.straight_wall_count} of {2 * config.points_per_side} logical walls "
         f"(fraction={config.straight_wall_fraction:.3f}, mode={config.straight_wall_mode})"
     )
-    print(f"Unified reachability config: {config.namo_config_yaml}")
 
     for index in range(config.num_templates):
         seed = config.start_seed + index

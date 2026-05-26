@@ -8,7 +8,6 @@ start_seed: 0
 
 robot_config_yaml: ../tiny_robot_control/config/real.yaml
 wavefront_inflation_yaml: ../tiny_robot_control/config/wavefront_inflation.yaml
-namo_config_yaml: ../namo_cpp/config/namo_config_complete_skill15_1x.yaml
 inflation_context: navigation
 
 # Optional extra floor above the shared inflation-derived minimum.
