@@ -1,0 +1,13 @@
+{
+  "_comment": "Per-template num_objects ranges for aug9_car. Keys are '<parent_dir>/<basename>'. Values are [min, max] (inclusive uniform sample per env). Picked by arena area: smaller arenas get fewer obstacles.",
+  "set1/benchmark_1": [4, 7],
+  "set1/benchmark_2": [4, 7],
+  "set1/benchmark_3": [5, 8],
+  "set1/benchmark_4": [6, 9],
+  "set1/benchmark_5": [7, 10],
+  "set2/benchmark_1": [3, 6],
+  "set2/benchmark_2": [3, 6],
+  "set2/benchmark_3": [2, 5],
+  "set2/benchmark_4": [2, 4],
+  "set2/benchmark_5": [2, 5]
+}
