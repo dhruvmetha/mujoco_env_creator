@@ -1331,6 +1331,7 @@ def generate_environments_parallel(
     namo_config_path: str,
     num_workers: int = 4,
     start_seed: int = 0,
+    run_id_offset: int = 0,
 ) -> None:
     """Generate multiple environments in parallel.
 
@@ -1361,13 +1362,16 @@ def generate_environments_parallel(
     template_out_dir = os.path.join(output_dir, template_base)
     os.makedirs(template_out_dir, exist_ok=True)
 
-    # Prepare per-job output subdirectories and argument list
+    # Prepare per-job output subdirectories and argument list. Run index used in
+    # the directory name is i + run_id_offset, so multiple parallel invocations
+    # against the same (template_out_dir) can use disjoint --run-id-offset to
+    # avoid clobbering each other's run_NNNN dirs.
     args_list = []
     for i in range(num_envs):
-        run_subdir = os.path.join(template_out_dir, f"run_{i:04d}")
-        # create here to avoid races / ensure directory exists for consumers
+        run_idx = i + run_id_offset
+        run_subdir = os.path.join(template_out_dir, f"run_{run_idx:04d}")
         os.makedirs(run_subdir, exist_ok=True)
-        args_list.append((template_xml_path, i, run_subdir, config, namo_config_path, start_seed + i))
+        args_list.append((template_xml_path, run_idx, run_subdir, config, namo_config_path, start_seed + i))
 
     # Run jobs in parallel (each job may write multiple env files into its run_<idx> dir)
     with mp.Pool(num_workers) as pool:
@@ -1391,6 +1395,11 @@ def main():
     parser.add_argument('--config', type=str, default=None, help='Path to YAML config file')
     parser.add_argument('--num-workers', type=int, default=4, help='Number of parallel workers')
     parser.add_argument('--start-seed', type=int, default=0, help='Starting random seed')
+    parser.add_argument('--run-id-offset', type=int, default=0,
+                        help='Offset for run_NNNN directory naming. Run i is written to '
+                             'run_{i + run_id_offset:04d}/, allowing multiple parallel invocations '
+                             'against the same output dir to use disjoint id ranges without '
+                             'clobbering each other.')
     
     # Environment parameters (override config file)
     parser.add_argument('--num-objects-range', type=int, nargs=2, metavar=('MIN', 'MAX'),
@@ -1555,6 +1564,7 @@ def main():
         args.namo_config,
         args.num_workers,
         args.start_seed,
+        args.run_id_offset,
     )
 
 
