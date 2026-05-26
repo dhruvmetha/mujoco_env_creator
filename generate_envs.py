@@ -220,7 +220,7 @@ def _runtime_validate_adjacency(exporter, robot_pos, goal_pos, exact_hop: int = 
 # ------------------------------------------------------------------
 # Configuration
 # ------------------------------------------------------------------
-DEFAULT_NUM_OBJECTS_RANGE = (3, 10)  # num_objects is always a range; uniform-sampled per env
+DEFAULT_NUM_OBJECTS_RANGE = (3, 10)  # fallback uniform range when no per-template JSON applies
 DEFAULT_OBJECT_SIZE_RANGE = (0.4, 1.4)  # (min, max) side length (2x half-size from config)
 
 
@@ -232,6 +232,14 @@ def _resolve_num_objects(cfg_val: Any, rng: np.random.Generator) -> int:
             lo, hi = hi, lo
         return int(rng.integers(lo, hi + 1))
     return int(cfg_val)
+
+
+def _template_lookup_key(template_xml_path: str) -> str:
+    """Two-part key '<parent_dir>/<basename>' to match the JSON map and the output namespacing."""
+    norm = os.path.normpath(template_xml_path)
+    parent = os.path.basename(os.path.dirname(norm))
+    base = os.path.splitext(os.path.basename(norm))[0]
+    return f"{parent}/{base}" if parent and parent not in (".", "") else base
 
 DEFAULT_CLEARANCE_RADIUS = 0.3  # meters
 DEFAULT_MIN_GOAL_DISTANCE = 1.0  # meters minimum separation between robot and goal
@@ -717,6 +725,7 @@ def place_robot_and_goal_pairs(
     samples_per_pair: int = 1,
     exact_hop: int = 0,
     region_goals: Optional[Dict[str, Any]] = None,
+    min_region_area_m2: float = 0.0,
 ) -> List[Tuple[Tuple[float, float], Tuple[float, float]]]:
     """For every connected component, generate a placement for every unordered pair
     of distinct regions (n choose 2). Returns a list of (robot_pos, goal_pos) pairs.
@@ -730,6 +739,21 @@ def place_robot_and_goal_pairs(
     valid_components = [c for c in components if len(c) >= 2]
     if debug:
         print(f"  [DEBUG] Generating pairs for {len(valid_components)} valid components")
+
+    # Filter out regions smaller than min_region_area_m2 from the pair candidates.
+    # A region's area = cell_count * resolution^2. The filter only removes pairs
+    # that involve a too-small region; the small regions remain in the snapshot
+    # for downstream wavefront queries.
+    too_small_labels: Set[str] = set()
+    if min_region_area_m2 > 0:
+        cell_area = exporter.resolution * exporter.resolution
+        for rid, lbl in region_labels.items():
+            n_cells = int((region_map == rid).sum())
+            if n_cells * cell_area < min_region_area_m2:
+                too_small_labels.add(lbl)
+        if debug and too_small_labels:
+            print(f"  [DEBUG] Skipping {len(too_small_labels)} regions < "
+                  f"{min_region_area_m2:.4f} m^2: {sorted(too_small_labels)}")
 
     # Pull per-region pre-sampled positions out of the snapshot. The new
     # WavefrontSnapshotExporter API does sampling C++-side (respecting
@@ -805,6 +829,9 @@ def place_robot_and_goal_pairs(
         regions = list(component)
         # iterate over unordered pairs (i<j) -> C(n,2)
         for ri, rj in itertools.combinations(regions, 2):
+            # Drop pairs involving regions below the min-area threshold.
+            if ri in too_small_labels or rj in too_small_labels:
+                continue
             # Hop filtering at gen-time on the static adjacency graph:
             #   exact_hop > 0 → only pairs whose BFS distance equals exact_hop
             #   require_adjacent (legacy) → equivalent to exact_hop=1
@@ -1023,6 +1050,7 @@ def generate_environments_from_pairs(
     require_adjacent = bool(config.get('require_adjacent', False))
     samples_per_pair = int(config.get('samples_per_pair', 1))
     exact_hop = int(config.get('exact_hop', 0))
+    min_region_area_m2 = float(config.get('min_region_area_m2', 0.0))
 
     # Parse template XML
     try:
@@ -1039,7 +1067,7 @@ def generate_environments_from_pairs(
     # Reject-and-resample loop: re-roll the entire obstacle layout if the
     # resulting wavefront snapshot can't produce any (robot, goal) pair.
     # Each "layout try" is one independent fresh roll of all obstacles.
-    MAX_LAYOUT_TRIES = int(config.get('max_layout_tries', 20))
+    MAX_LAYOUT_TRIES = int(config.get('max_layout_tries', 500))
     os.makedirs(output_dir, exist_ok=True)
     temp_xml_path = os.path.join(output_dir, f'env_{env_id:04d}_temp.xml')
 
@@ -1115,6 +1143,7 @@ def generate_environments_from_pairs(
                 samples_per_pair=samples_per_pair,
                 exact_hop=exact_hop,
                 region_goals=region_goals,
+                min_region_area_m2=min_region_area_m2,
             )
         except Exception as e:
             print(f"[Env {env_id}] try {layout_try+1}: pair error: {e}")
@@ -1256,7 +1285,13 @@ def main():
                         default=None,
                         help='Sample num_objects per env uniformly from [MIN, MAX] (inclusive). '
                              'Sampling uses the per-env seeded RNG, so generation stays reproducible. '
-                             f'Defaults to {DEFAULT_NUM_OBJECTS_RANGE} when not provided.')
+                             f'Defaults to {DEFAULT_NUM_OBJECTS_RANGE} when neither this flag nor '
+                             '--num-objects-json is provided. Overridden by --num-objects-json if both set.')
+    parser.add_argument('--num-objects-json', type=str, default=None,
+                        help='Path to a JSON file mapping "<parent_dir>/<basename>" template keys to '
+                             '[min, max] num_objects ranges. When the current template matches a key, '
+                             'its range is used instead of --num-objects-range. Templates not in the JSON '
+                             'fall back to --num-objects-range (or the default).')
     # Use None as sentinel so we can distinguish "user didn't pass" from "user
     # explicitly passed the default value" — required for the --robot-scale
     # auto-override logic below to know whether to scale the default.
@@ -1297,6 +1332,14 @@ def main():
                              '1 = direct neighbors (== --require-adjacent), '
                              '2 = need to chain through one intermediate region, etc. '
                              'Overrides --require-adjacent when set. Default 0 (disabled).')
+    parser.add_argument('--min-region-area', type=float, default=0.02,
+                        help='Minimum region area in m^2 for a region to be eligible as a '
+                             'robot or goal location. Regions below this size are skipped from '
+                             'pair generation but still appear in the wavefront snapshot. '
+                             'Default 0.02 (~14x14cm = car rotation-capable region; 4x car '
+                             'footprint). Set 0 to disable. Larger values like 0.05 (~22x22cm) '
+                             'force "real-room" regions but trigger more layout retries on '
+                             'small arenas.')
 
     args = parser.parse_args()
 
@@ -1355,8 +1398,25 @@ def main():
     else:
         config = {}
     
-    # Override with command line args
-    if args.num_objects_range is not None:
+    # Override with command line args. Priority: --num-objects-json (per-template lookup) >
+    # --num-objects-range > existing config value > DEFAULT_NUM_OBJECTS_RANGE.
+    json_override = None
+    if args.num_objects_json is not None:
+        import json as _json
+        try:
+            with open(args.num_objects_json, 'r') as _fh:
+                _json_map = _json.load(_fh)
+        except Exception as _e:
+            raise SystemExit(f"Failed to load --num-objects-json {args.num_objects_json}: {_e}")
+        _key = _template_lookup_key(args.template_xml)
+        if _key in _json_map:
+            json_override = list(_json_map[_key])
+            print(f"[num-objects-json] template '{_key}' -> range {json_override}")
+        else:
+            print(f"[num-objects-json] template '{_key}' not in JSON; falling back")
+    if json_override is not None:
+        config['num_objects'] = json_override
+    elif args.num_objects_range is not None:
         config['num_objects'] = list(args.num_objects_range)
     elif 'num_objects' not in config:
         config['num_objects'] = list(DEFAULT_NUM_OBJECTS_RANGE)
@@ -1368,6 +1428,7 @@ def main():
     config['require_adjacent'] = args.require_adjacent
     config['samples_per_pair'] = args.samples_per_pair
     config['exact_hop'] = args.exact_hop
+    config['min_region_area_m2'] = args.min_region_area
     if args.object_size_range is not None:
         config['object_size_range'] = tuple(args.object_size_range)
     elif scaled_size_range is not None and 'object_size_range' not in config:
