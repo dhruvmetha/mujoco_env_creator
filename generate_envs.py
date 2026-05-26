@@ -250,6 +250,43 @@ DEFAULT_MAX_GOAL_RETRIES = 10  # maximum retries for goal placement with clearan
 # ------------------------------------------------------------------
 # XML Parsing and Manipulation
 # ------------------------------------------------------------------
+def _extract_geom_rotation_deg(geom: ET.Element) -> float:
+    """Extract yaw rotation in degrees from euler or quat attributes."""
+    euler_str = geom.get('euler')
+    if euler_str:
+        euler_parts = [float(x) for x in euler_str.split()]
+        if len(euler_parts) >= 3:
+            return euler_parts[2]
+
+    quat_str = geom.get('quat')
+    if quat_str:
+        quat_parts = [float(x) for x in quat_str.split()]
+        if len(quat_parts) == 4:
+            w, x, y, z = quat_parts
+            yaw_rad = np.arctan2(
+                2.0 * (w * z + x * y),
+                1.0 - 2.0 * (y * y + z * z),
+            )
+            return float(np.degrees(yaw_rad))
+
+    return 0.0
+
+
+def _rotated_bbox_half_extents(
+    half_size_x: float,
+    half_size_y: float,
+    rotation_deg: float,
+) -> Tuple[float, float]:
+    """Return axis-aligned half extents of a rotated rectangle."""
+    angle_rad = np.radians(rotation_deg)
+    cos_a = abs(np.cos(angle_rad))
+    sin_a = abs(np.sin(angle_rad))
+    return (
+        half_size_x * cos_a + half_size_y * sin_a,
+        half_size_x * sin_a + half_size_y * cos_a,
+    )
+
+
 def parse_xml_template(xml_path: str) -> Tuple[ET.ElementTree, Dict[str, Any]]:
     """Parse XML template and extract environment information.
     
@@ -269,26 +306,43 @@ def parse_xml_template(xml_path: str) -> Tuple[ET.ElementTree, Dict[str, Any]]:
     
     # Extract walls
     walls = []
+    boundary_walls = []
     walls_body = worldbody.find(".//body[@name='walls']")
     if walls_body is not None:
         for geom in walls_body.findall('geom'):
             pos_str = geom.get('pos', '0 0 0')
             size_str = geom.get('size', '0.1 0.1 0.1')
+            rotation = _extract_geom_rotation_deg(geom)
             pos = [float(x) for x in pos_str.split()]
             size = [float(x) for x in size_str.split()]
-            walls.append({'pos': pos[:2], 'size': size[:2], 'elem': geom})
+            wall = {
+                'name': geom.get('name', ''),
+                'pos': pos[:2],
+                'size': size[:2],
+                'rotation': rotation,
+                'elem': geom,
+            }
+            walls.append(wall)
+            if wall['name'].startswith('wall_boundary_'):
+                boundary_walls.append(wall)
     
     # Compute bounds from walls
     min_x, max_x = float('inf'), float('-inf')
     min_y, max_y = float('inf'), float('-inf')
     
-    for wall in walls:
+    bounds_source = boundary_walls if boundary_walls else walls
+    for wall in bounds_source:
         x, y = wall['pos']
         sx, sy = wall['size']
-        min_x = min(min_x, x - sx)
-        max_x = max(max_x, x + sx)
-        min_y = min(min_y, y - sy)
-        max_y = max(max_y, y + sy)
+        bbox_sx, bbox_sy = _rotated_bbox_half_extents(
+            sx,
+            sy,
+            wall.get('rotation', 0.0),
+        )
+        min_x = min(min_x, x - bbox_sx)
+        max_x = max(max_x, x + bbox_sx)
+        min_y = min(min_y, y - bbox_sy)
+        max_y = max(max_y, y + bbox_sy)
     
     bounds = (min_x, max_x, min_y, max_y)
     
