@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import random
+import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -28,6 +31,11 @@ DEFAULT_REAL_CONFIG_YAML = REPO_ROOT / "tiny_robot_control" / "config" / "real.y
 DEFAULT_WAVEFRONT_INFLATION_YAML = (
     REPO_ROOT / "tiny_robot_control" / "config" / "wavefront_inflation.yaml"
 )
+DEFAULT_NAMO_CONFIG_YAML = (
+    REPO_ROOT / "namo_cpp" / "config" / "namo_config_complete_skill15_1x.yaml"
+)
+DEFAULT_NAMO_PYTHON_PATH = REPO_ROOT / "namo_cpp" / "python"
+DEFAULT_NAMO_BUILD_PYTHON_PATH = REPO_ROOT / "namo_cpp" / "build_python"
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "generated_templates_real"
 
 
@@ -37,6 +45,7 @@ REAL_WORKSPACE_HEIGHT_M = 0.775
 
 # Boundary wall geometry from the unscaled real XML.
 BOUNDARY_WALL_HALF_THICKNESS_M = 0.01
+BOUNDARY_WALL_FULL_THICKNESS_M = BOUNDARY_WALL_HALF_THICKNESS_M * 2.0
 WALL_HALF_HEIGHT_M = 0.05
 
 # User-requested inner-wall thickness.
@@ -45,19 +54,28 @@ INNER_WALL_HALF_WIDTH_M = INNER_WALL_FULL_WIDTH_M / 2.0
 
 
 ROBOT_MASS_KG = 5.0
-ROBOT_FRICTION = "1.0 0.005 0.001"
+ROBOT_FRICTION = "1.0 0.005 0.0001"
 FLOOR_FRICTION = "0.5 0.005 0.001"
 WALL_FRICTION = "1.0 0.005 0.0001"
 WALL_RGBA = "0.8 0.8 0.8 1"
 GOAL_RGBA = "0 1 0 0.5"
 GOAL_RADIUS_M = 0.05
+ACTUATOR_KV = "50"
+ACTUATOR_CTRLRANGE = "-0.5 0.5"
+ACTUATOR_FORCERANGE = "-20 20"
 FLOAT_EPS = 1e-9
+GEOMETRY_SAFETY_MARGIN_M = 1e-6
+MAX_POSE_ATTEMPTS_PER_LAYOUT = 20
 
 INFLATION_CONTEXTS = {
     "navigation",
     "push_approach",
     "xml_collision_resolution",
 }
+STRAIGHT_WALL_MODES = {
+    "mixed",
+}
+SIDE_ORDER = ("left", "right", "bottom", "top")
 
 
 @dataclass(frozen=True)
@@ -94,6 +112,7 @@ class ResolvedConfig:
     start_seed: int
     robot_config_yaml: Path
     wavefront_inflation_yaml: Path
+    namo_config_yaml: Path
     robot_width_cm: float
     robot_height_cm: float
     inflation_context: str
@@ -101,11 +120,17 @@ class ResolvedConfig:
     min_gap_length_m: float
     min_segment_length_m: float
     corner_margin_m: float
+    straight_wall_fraction: float
+    straight_wall_mode: str
+    straight_wall_count: int
     max_layout_attempts: int
 
 
 class LayoutGenerationError(RuntimeError):
     """Raised when a valid wall layout cannot be generated."""
+
+
+_NAMO_RL_MODULE = None
 
 
 def _safe_float(value: Any, default: float) -> float:
@@ -250,6 +275,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--namo_config_yaml",
+        type=str,
+        default=None,
+        help=(
+            "NAMO config used for the unified reachability rejection check. "
+            f"Default: {DEFAULT_NAMO_CONFIG_YAML}"
+        ),
+    )
+    parser.add_argument(
         "--robot_width_cm",
         type=float,
         default=None,
@@ -290,6 +324,26 @@ def parse_args() -> argparse.Namespace:
         help="Corner exclusion margin when sampling boundary points.",
     )
     parser.add_argument(
+        "--straight_wall_fraction",
+        type=float,
+        default=None,
+        help=(
+            "Fraction of logical inner walls to force straight. "
+            "Straight walls are axis-aligned, using left-right and/or "
+            "bottom-top pairings."
+        ),
+    )
+    parser.add_argument(
+        "--straight_wall_mode",
+        type=str,
+        choices=sorted(STRAIGHT_WALL_MODES),
+        default=None,
+        help=(
+            "Straight-wall mode. Only 'mixed' is supported, meaning forced "
+            "straight walls may be horizontal and/or vertical."
+        ),
+    )
+    parser.add_argument(
         "--max_layout_attempts",
         type=int,
         default=None,
@@ -306,12 +360,15 @@ def resolve_config(args: argparse.Namespace) -> ResolvedConfig:
         "start_seed": 0,
         "robot_config_yaml": str(DEFAULT_REAL_CONFIG_YAML),
         "wavefront_inflation_yaml": str(DEFAULT_WAVEFRONT_INFLATION_YAML),
+        "namo_config_yaml": str(DEFAULT_NAMO_CONFIG_YAML),
         "robot_width_cm": None,
         "robot_height_cm": None,
         "inflation_context": "navigation",
         "min_gap_length_m": None,
         "min_segment_length_m": None,
         "corner_margin_m": INNER_WALL_HALF_WIDTH_M,
+        "straight_wall_fraction": 0.0,
+        "straight_wall_mode": "mixed",
         "max_layout_attempts": 200,
     }
 
@@ -345,6 +402,7 @@ def resolve_config(args: argparse.Namespace) -> ResolvedConfig:
     output_dir = resolve_merged_path("output_dir")
     robot_config_yaml = resolve_merged_path("robot_config_yaml")
     wavefront_inflation_yaml = resolve_merged_path("wavefront_inflation_yaml")
+    namo_config_yaml = resolve_merged_path("namo_config_yaml")
 
     robot_width_cm = merged["robot_width_cm"]
     robot_height_cm = merged["robot_height_cm"]
@@ -379,6 +437,33 @@ def resolve_config(args: argparse.Namespace) -> ResolvedConfig:
         )
     if corner_margin_m * 2.0 >= min(REAL_WORKSPACE_WIDTH_M, REAL_WORKSPACE_HEIGHT_M):
         raise ValueError("corner_margin_m is too large for the fixed workspace")
+
+    straight_wall_fraction = float(merged["straight_wall_fraction"])
+    if not 0.0 <= straight_wall_fraction <= 1.0:
+        raise ValueError("straight_wall_fraction must be between 0.0 and 1.0")
+
+    straight_wall_mode = str(merged["straight_wall_mode"])
+    if straight_wall_mode not in STRAIGHT_WALL_MODES:
+        choices = ", ".join(sorted(STRAIGHT_WALL_MODES))
+        raise ValueError(
+            f"Unsupported straight_wall_mode '{straight_wall_mode}'. Choices: {choices}"
+        )
+
+    total_logical_walls = 2 * int(merged["points_per_side"])
+    straight_wall_count = int(
+        round(straight_wall_fraction * total_logical_walls)
+    )
+    max_straight_wall_count = max_straight_walls_for_mode(
+        int(merged["points_per_side"]),
+        straight_wall_mode,
+    )
+    if straight_wall_count > max_straight_wall_count:
+        raise ValueError(
+            "Requested straight_wall_fraction is not feasible for the chosen mode: "
+            f"{straight_wall_count} straight walls requested, but mode="
+            f"{straight_wall_mode} allows at most {max_straight_wall_count} with "
+            f"points_per_side={int(merged['points_per_side'])}."
+        )
 
     inflation_settings = load_inflation_settings(wavefront_inflation_yaml)
     required_gap_length_m = 2.0 * inflated_robot_radius_m(
@@ -415,6 +500,7 @@ def resolve_config(args: argparse.Namespace) -> ResolvedConfig:
         start_seed=int(merged["start_seed"]),
         robot_config_yaml=robot_config_yaml,
         wavefront_inflation_yaml=wavefront_inflation_yaml,
+        namo_config_yaml=namo_config_yaml,
         robot_width_cm=float(robot_width_cm),
         robot_height_cm=float(robot_height_cm),
         inflation_context=inflation_context,
@@ -422,6 +508,9 @@ def resolve_config(args: argparse.Namespace) -> ResolvedConfig:
         min_gap_length_m=min_gap_length_m,
         min_segment_length_m=min_segment_length_m,
         corner_margin_m=corner_margin_m,
+        straight_wall_fraction=straight_wall_fraction,
+        straight_wall_mode=straight_wall_mode,
+        straight_wall_count=straight_wall_count,
         max_layout_attempts=int(merged["max_layout_attempts"]),
     )
 
@@ -448,22 +537,138 @@ def sample_side_points(
     return points
 
 
-def random_pairing_counts(points_per_side: int, rng: random.Random) -> Tuple[int, int, int]:
-    compositions = [
-        (a, b, points_per_side - a - b)
-        for a in range(points_per_side + 1)
-        for b in range(points_per_side - a + 1)
-    ]
-    return rng.choice(compositions)
+def max_straight_walls_for_mode(points_per_side: int, straight_wall_mode: str) -> int:
+    if straight_wall_mode != "mixed":
+        raise ValueError(f"Unsupported straight_wall_mode: {straight_wall_mode}")
+    return 2 * points_per_side
+
+
+def random_straight_wall_counts(
+    total_straight_walls: int,
+    points_per_side: int,
+    straight_wall_mode: str,
+    rng: random.Random,
+) -> Tuple[int, int]:
+    if total_straight_walls < 0:
+        raise ValueError("total_straight_walls must be non-negative")
+    if straight_wall_mode != "mixed":
+        raise ValueError(f"Unsupported straight_wall_mode: {straight_wall_mode}")
+
+    min_horizontal = max(0, total_straight_walls - points_per_side)
+    max_horizontal = min(total_straight_walls, points_per_side)
+    horizontal_count = rng.randint(min_horizontal, max_horizontal)
+    vertical_count = total_straight_walls - horizontal_count
+    return horizontal_count, vertical_count
+
+
+def sample_straight_pairs(
+    horizontal_count: int,
+    vertical_count: int,
+    rng: random.Random,
+    corner_margin_m: float,
+) -> List[Tuple[AnchorPoint, AnchorPoint]]:
+    pairs: List[Tuple[AnchorPoint, AnchorPoint]] = []
+
+    for _ in range(horizontal_count):
+        y_value = rng.uniform(
+            corner_margin_m,
+            REAL_WORKSPACE_HEIGHT_M - corner_margin_m,
+        )
+        pairs.append(
+            (
+                AnchorPoint(side="left", x=0.0, y=y_value),
+                AnchorPoint(side="right", x=REAL_WORKSPACE_WIDTH_M, y=y_value),
+            )
+        )
+
+    for _ in range(vertical_count):
+        x_value = rng.uniform(
+            corner_margin_m,
+            REAL_WORKSPACE_WIDTH_M - corner_margin_m,
+        )
+        pairs.append(
+            (
+                AnchorPoint(side="bottom", x=x_value, y=0.0),
+                AnchorPoint(side="top", x=x_value, y=REAL_WORKSPACE_HEIGHT_M),
+            )
+        )
+
+    rng.shuffle(pairs)
+    return pairs
+
+
+def can_complete_pairing(counts: Dict[str, int]) -> bool:
+    total_points = sum(counts.values())
+    if total_points % 2 != 0:
+        return False
+    if total_points == 0:
+        return True
+    return max(counts.values()) * 2 <= total_points
+
+
+def sample_pair_side_sequence(
+    counts: Dict[str, int],
+    rng: random.Random,
+) -> List[Tuple[str, str]]:
+    if not can_complete_pairing(counts):
+        raise LayoutGenerationError(f"Infeasible side counts for pairing: {counts}")
+
+    dead_states = set()
+
+    def backtrack(state: Tuple[int, int, int, int]) -> Optional[List[Tuple[str, str]]]:
+        if sum(state) == 0:
+            return []
+        if state in dead_states:
+            return None
+
+        max_count = max(state)
+        candidate_a_indices = [
+            index for index, value in enumerate(state) if value == max_count
+        ]
+        rng.shuffle(candidate_a_indices)
+
+        for side_a_index in candidate_a_indices:
+            side_b_indices = [
+                index
+                for index, value in enumerate(state)
+                if index != side_a_index and value > 0
+            ]
+            rng.shuffle(side_b_indices)
+
+            for side_b_index in side_b_indices:
+                next_state = list(state)
+                next_state[side_a_index] -= 1
+                next_state[side_b_index] -= 1
+                next_counts = {
+                    side: next_state[index]
+                    for index, side in enumerate(SIDE_ORDER)
+                }
+                if not can_complete_pairing(next_counts):
+                    continue
+
+                remainder = backtrack(tuple(next_state))
+                if remainder is not None:
+                    return [
+                        (SIDE_ORDER[side_a_index], SIDE_ORDER[side_b_index]),
+                        *remainder,
+                    ]
+
+        dead_states.add(state)
+        return None
+
+    initial_state = tuple(counts[side] for side in SIDE_ORDER)
+    result = backtrack(initial_state)
+    if result is None:
+        raise LayoutGenerationError(
+            f"Failed to find a valid cross-side pairing for counts {counts}"
+        )
+    return result
 
 
 def pair_side_points(
     points_by_side: Dict[str, List[AnchorPoint]],
     rng: random.Random,
 ) -> List[Tuple[AnchorPoint, AnchorPoint]]:
-    count = len(points_by_side["left"])
-    a_count, b_count, c_count = random_pairing_counts(count, rng)
-
     shuffled: Dict[str, List[AnchorPoint]] = {
         side: list(points)
         for side, points in points_by_side.items()
@@ -478,22 +683,176 @@ def pair_side_points(
         offsets[side] = index + 1
         return shuffled[side][index]
 
-    pairs: List[Tuple[AnchorPoint, AnchorPoint]] = []
-    pair_counts = [
-        ("left", "right", a_count),
-        ("left", "bottom", b_count),
-        ("left", "top", c_count),
-        ("right", "bottom", c_count),
-        ("right", "top", b_count),
-        ("bottom", "top", a_count),
+    side_counts = {
+        side: len(points)
+        for side, points in shuffled.items()
+    }
+    pair_sequence = sample_pair_side_sequence(side_counts, rng)
+    return [(take(side_a), take(side_b)) for side_a, side_b in pair_sequence]
+
+
+def clip_segment_to_axis_aligned_box(
+    start_x: float,
+    start_y: float,
+    end_x: float,
+    end_y: float,
+    min_x: float,
+    max_x: float,
+    min_y: float,
+    max_y: float,
+) -> Optional[Tuple[Tuple[float, float], Tuple[float, float]]]:
+    """Clip a segment to an axis-aligned box using Liang-Barsky."""
+    dx = end_x - start_x
+    dy = end_y - start_y
+    t_min = 0.0
+    t_max = 1.0
+
+    for p, q in (
+        (-dx, start_x - min_x),
+        (dx, max_x - start_x),
+        (-dy, start_y - min_y),
+        (dy, max_y - start_y),
+    ):
+        if abs(p) <= FLOAT_EPS:
+            if q < 0.0:
+                return None
+            continue
+
+        t = q / p
+        if p < 0.0:
+            t_min = max(t_min, t)
+        else:
+            t_max = min(t_max, t)
+
+        if t_min > t_max + FLOAT_EPS:
+            return None
+
+    clipped_start = (start_x + t_min * dx, start_y + t_min * dy)
+    clipped_end = (start_x + t_max * dx, start_y + t_max * dy)
+    return clipped_start, clipped_end
+
+
+def clip_wall_centerline_to_enclosure(
+    point_a: AnchorPoint,
+    point_b: AnchorPoint,
+    half_width_m: float,
+) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+    dx = point_b.x - point_a.x
+    dy = point_b.y - point_a.y
+    wall_length_m = math.hypot(dx, dy)
+    if wall_length_m <= FLOAT_EPS:
+        raise LayoutGenerationError("Wall endpoints collapsed to zero length")
+
+    # Allow overlap with the boundary-wall volume, but not past the outer face.
+    # This keeps slanted walls visually connected to the boundary while
+    # preventing their corners from poking outside the enclosure.
+    x_margin = half_width_m * abs(dy) / wall_length_m
+    y_margin = half_width_m * abs(dx) / wall_length_m
+
+    min_x = -BOUNDARY_WALL_FULL_THICKNESS_M + x_margin + GEOMETRY_SAFETY_MARGIN_M
+    max_x = (
+        REAL_WORKSPACE_WIDTH_M
+        + BOUNDARY_WALL_FULL_THICKNESS_M
+        - x_margin
+        - GEOMETRY_SAFETY_MARGIN_M
+    )
+    min_y = -BOUNDARY_WALL_FULL_THICKNESS_M + y_margin + GEOMETRY_SAFETY_MARGIN_M
+    max_y = (
+        REAL_WORKSPACE_HEIGHT_M
+        + BOUNDARY_WALL_FULL_THICKNESS_M
+        - y_margin
+        - GEOMETRY_SAFETY_MARGIN_M
+    )
+
+    clipped = clip_segment_to_axis_aligned_box(
+        point_a.x,
+        point_a.y,
+        point_b.x,
+        point_b.y,
+        min_x,
+        max_x,
+        min_y,
+        max_y,
+    )
+    if clipped is None:
+        raise LayoutGenerationError("Could not clip wall to the physical enclosure")
+    return clipped
+
+
+def ensure_namo_rl_import():
+    global _NAMO_RL_MODULE
+    if _NAMO_RL_MODULE is not None:
+        return _NAMO_RL_MODULE
+
+    candidate_paths = [
+        os.environ.get("NAMO_RL_BUILD_PYTHON_PATH"),
+        str(DEFAULT_NAMO_BUILD_PYTHON_PATH),
+        os.environ.get("NAMO_PYTHON_PATH"),
+        str(DEFAULT_NAMO_PYTHON_PATH),
     ]
+    for raw_path in candidate_paths:
+        if not raw_path:
+            continue
+        resolved = str(Path(raw_path).expanduser().resolve())
+        if resolved not in sys.path and Path(resolved).exists():
+            sys.path.insert(0, resolved)
 
-    for side_a, side_b, pair_count in pair_counts:
-        for _ in range(pair_count):
-            pairs.append((take(side_a), take(side_b)))
+    try:
+        import namo_rl  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "Could not import namo_rl for unified reachability validation. "
+            "Expected local paths under namo_cpp/build_python and namo_cpp/python "
+            "or overrides via NAMO_RL_BUILD_PYTHON_PATH / NAMO_PYTHON_PATH."
+        ) from exc
 
-    rng.shuffle(pairs)
-    return pairs
+    _NAMO_RL_MODULE = namo_rl
+    return _NAMO_RL_MODULE
+
+
+def validate_robot_goal_reachability(
+    env: Any,
+    robot_position: Tuple[float, float],
+    goal_position: Tuple[float, float],
+) -> bool:
+    env.reset()
+    env.set_robot_pose(robot_position[0], robot_position[1], 0.0)
+    env.set_robot_goal_silent(goal_position[0], goal_position[1], 0.0)
+    return bool(env.is_robot_goal_reachable())
+
+
+def create_validation_environment(
+    xml_text: str,
+    config: ResolvedConfig,
+) -> Tuple[Any, str]:
+    namo_rl = ensure_namo_rl_import()
+    temp_handle = tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".xml",
+        prefix="real_template_validate_",
+        delete=False,
+        encoding="utf-8",
+    )
+    temp_xml_path = temp_handle.name
+    try:
+        temp_handle.write(xml_text)
+    finally:
+        temp_handle.close()
+
+    try:
+        env = namo_rl.RLEnvironment(
+            temp_xml_path,
+            str(config.namo_config_yaml),
+            visualize=False,
+        )
+    except Exception:
+        try:
+            os.remove(temp_xml_path)
+        except OSError:
+            pass
+        raise
+
+    return env, temp_xml_path
 
 
 def build_segments_for_pair(
@@ -503,9 +862,14 @@ def build_segments_for_pair(
     min_gap_length_m: float,
     min_segment_length_m: float,
 ) -> List[WallGeom]:
-    point_a, point_b = pair
-    dx = point_b.x - point_a.x
-    dy = point_b.y - point_a.y
+    raw_point_a, raw_point_b = pair
+    (start_x, start_y), (end_x, end_y) = clip_wall_centerline_to_enclosure(
+        raw_point_a,
+        raw_point_b,
+        INNER_WALL_HALF_WIDTH_M,
+    )
+    dx = end_x - start_x
+    dy = end_y - start_y
     wall_length_m = math.hypot(dx, dy)
 
     required_length_m = 2.0 * min_segment_length_m + min_gap_length_m
@@ -551,8 +915,8 @@ def build_segments_for_pair(
             continue
 
         segment_midpoint_m = segment_start_m + segment_length_m / 2.0
-        center_x = point_a.x + direction_x * segment_midpoint_m
-        center_y = point_a.y + direction_y * segment_midpoint_m
+        center_x = start_x + direction_x * segment_midpoint_m
+        center_y = start_y + direction_y * segment_midpoint_m
         suffix += 1
         geoms.append(
             WallGeom(
@@ -827,22 +1191,16 @@ def build_xml(
     )
 
     actuator = SubElement(root, "actuator")
-    SubElement(
-        actuator,
-        "motor",
-        name="actuator_x",
-        joint="joint_x",
-        gear="1",
-        ctrlrange="-1 1",
-    )
-    SubElement(
-        actuator,
-        "motor",
-        name="actuator_y",
-        joint="joint_y",
-        gear="1",
-        ctrlrange="-1 1",
-    )
+    for axis in ("x", "y"):
+        SubElement(
+            actuator,
+            "velocity",
+            name=f"actuator_{axis}",
+            joint=f"joint_{axis}",
+            kv=ACTUATOR_KV,
+            ctrlrange=ACTUATOR_CTRLRANGE,
+            forcerange=ACTUATOR_FORCERANGE,
+        )
 
     rough_xml = tostring(root, encoding="unicode")
     return minidom.parseString(rough_xml).toprettyxml(indent="  ")
@@ -857,21 +1215,47 @@ def generate_template(config: ResolvedConfig, seed: int) -> str:
     )
 
     for _ in range(config.max_layout_attempts):
+        horizontal_straight_count, vertical_straight_count = random_straight_wall_counts(
+            config.straight_wall_count,
+            config.points_per_side,
+            config.straight_wall_mode,
+            rng,
+        )
+        straight_pairs = sample_straight_pairs(
+            horizontal_straight_count,
+            vertical_straight_count,
+            rng,
+            config.corner_margin_m,
+        )
+
         points_by_side = {
             "left": sample_side_points(
-                rng, "left", config.points_per_side, config.corner_margin_m
+                rng,
+                "left",
+                config.points_per_side - horizontal_straight_count,
+                config.corner_margin_m,
             ),
             "right": sample_side_points(
-                rng, "right", config.points_per_side, config.corner_margin_m
+                rng,
+                "right",
+                config.points_per_side - horizontal_straight_count,
+                config.corner_margin_m,
             ),
             "bottom": sample_side_points(
-                rng, "bottom", config.points_per_side, config.corner_margin_m
+                rng,
+                "bottom",
+                config.points_per_side - vertical_straight_count,
+                config.corner_margin_m,
             ),
             "top": sample_side_points(
-                rng, "top", config.points_per_side, config.corner_margin_m
+                rng,
+                "top",
+                config.points_per_side - vertical_straight_count,
+                config.corner_margin_m,
             ),
         }
-        pairs = pair_side_points(points_by_side, rng)
+        pairs = [*straight_pairs, *pair_side_points(points_by_side, rng)]
+        rng.shuffle(pairs)
 
         wall_geoms: List[WallGeom] = []
         try:
@@ -885,15 +1269,54 @@ def generate_template(config: ResolvedConfig, seed: int) -> str:
                         min_segment_length_m=config.min_segment_length_m,
                     )
                 )
-            robot_position, goal_position = sample_robot_and_goal(
+        except LayoutGenerationError:
+            continue
+
+        env = None
+        temp_xml_path = None
+        try:
+            initial_robot_position, initial_goal_position = sample_robot_and_goal(
                 rng,
                 wall_geoms,
                 placeholder_clearance_radius_m,
             )
+            validation_xml = build_xml(
+                wall_geoms,
+                initial_robot_position,
+                initial_goal_position,
+                robot_radius_m,
+            )
+            env, temp_xml_path = create_validation_environment(validation_xml, config)
+
+            candidate_pairs = [
+                (initial_robot_position, initial_goal_position),
+            ]
+            for _ in range(MAX_POSE_ATTEMPTS_PER_LAYOUT - 1):
+                candidate_pairs.append(
+                    sample_robot_and_goal(
+                        rng,
+                        wall_geoms,
+                        placeholder_clearance_radius_m,
+                    )
+                )
+
+            for robot_position, goal_position in candidate_pairs:
+                if validate_robot_goal_reachability(env, robot_position, goal_position):
+                    return build_xml(
+                        wall_geoms,
+                        robot_position,
+                        goal_position,
+                        robot_radius_m,
+                    )
         except LayoutGenerationError:
             continue
-
-        return build_xml(wall_geoms, robot_position, goal_position, robot_radius_m)
+        finally:
+            env = None
+            if temp_xml_path is not None:
+                try:
+                    os.remove(temp_xml_path)
+                except OSError:
+                    pass
 
     raise LayoutGenerationError(
         "Failed to generate a valid layout after "
@@ -904,6 +1327,7 @@ def generate_template(config: ResolvedConfig, seed: int) -> str:
 
 def save_templates(config: ResolvedConfig) -> None:
     config.output_dir.mkdir(parents=True, exist_ok=True)
+    ensure_namo_rl_import()
 
     print(
         "Generating templates with fixed workspace "
@@ -919,6 +1343,12 @@ def save_templates(config: ResolvedConfig) -> None:
         "Effective min gap / min segment: "
         f"{config.min_gap_length_m:.4f} m / {config.min_segment_length_m:.4f} m"
     )
+    print(
+        "Forced straight walls: "
+        f"{config.straight_wall_count} of {2 * config.points_per_side} logical walls "
+        f"(fraction={config.straight_wall_fraction:.3f}, mode={config.straight_wall_mode})"
+    )
+    print(f"Unified reachability config: {config.namo_config_yaml}")
 
     for index in range(config.num_templates):
         seed = config.start_seed + index
