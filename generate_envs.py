@@ -220,8 +220,19 @@ def _runtime_validate_adjacency(exporter, robot_pos, goal_pos, exact_hop: int = 
 # ------------------------------------------------------------------
 # Configuration
 # ------------------------------------------------------------------
-DEFAULT_NUM_OBJECTS = 10
+DEFAULT_NUM_OBJECTS_RANGE = (3, 10)  # num_objects is always a range; uniform-sampled per env
 DEFAULT_OBJECT_SIZE_RANGE = (0.4, 1.4)  # (min, max) side length (2x half-size from config)
+
+
+def _resolve_num_objects(cfg_val: Any, rng: np.random.Generator) -> int:
+    """Accept either an int (fixed count) or a [min, max] pair (uniform sample, inclusive)."""
+    if isinstance(cfg_val, (list, tuple)):
+        lo, hi = int(cfg_val[0]), int(cfg_val[1])
+        if hi < lo:
+            lo, hi = hi, lo
+        return int(rng.integers(lo, hi + 1))
+    return int(cfg_val)
+
 DEFAULT_CLEARANCE_RADIUS = 0.3  # meters
 DEFAULT_MIN_GOAL_DISTANCE = 1.0  # meters minimum separation between robot and goal
 DEFAULT_RESOLUTION = 0.01  # meters per grid cell
@@ -408,22 +419,25 @@ def place_obstacles(
     rng: np.random.Generator,
     robot_pos: Optional[Tuple[float, float]] = None,
     robot_size: float = 0.15,
-    object_size_range_2: Optional[Tuple[float, float]] = None,
 ) -> List[Dict[str, Any]]:
     """Randomly place obstacles in the environment with random rotations, avoiding walls.
-    
+
+    Width and height are sampled independently from object_size_range, so the
+    obstacle's aspect ratio is left to chance: similar draws give near-squares,
+    different draws give rectangles.
+
     Args:
         walls: List of wall dictionaries with 'pos', 'size', and optionally 'rotation'
         bounds: (min_x, max_x, min_y, max_z) environment bounds
         num_objects: Number of obstacles to place
-        object_size_range: (min, max) size range for obstacles
+        object_size_range: (min, max) full side length, sampled independently for each side
         rng: Random number generator
         robot_pos: Optional (x, y) position of robot to avoid. If provided, obstacles
                    will not be placed overlapping with the robot.
         robot_size: Radius of the robot (used if robot_pos is provided)
     """
     obstacles = []
-    
+
     # Create a pseudo-obstacle for the robot if position is provided
     # Use a circular approximation (square bounding box) with some margin
     robot_obstacle = None
@@ -436,12 +450,6 @@ def place_obstacles(
             'rotation': 0
         }
 
-    # Two independent side ranges: side1 (used for width), side2 (used for
-    # height). If object_size_range_2 is None, both sides share the same range
-    # (square-ish obstacles, matching the original behaviour). Pass a separate
-    # range for side2 to get rectangular obstacles with varied aspect ratios.
-    side2_range = object_size_range_2 if object_size_range_2 is not None else object_size_range
-
     max_attempts = 1000
     for _ in range(num_objects):
         placed = False
@@ -450,7 +458,7 @@ def place_obstacles(
             x = rng.uniform(bounds[0], bounds[1])
             y = rng.uniform(bounds[2], bounds[3])
             width = rng.uniform(*object_size_range) / 2.0
-            height = rng.uniform(*side2_range) / 2.0
+            height = rng.uniform(*object_size_range) / 2.0
             rotation = rng.uniform(0, 360)  # Rotation in degrees
 
             # Create the obstacle object
@@ -849,10 +857,8 @@ def generate_single_environment(
     rng = np.random.default_rng(seed)
     
     # Extract config
-    num_objects = config.get('num_objects', DEFAULT_NUM_OBJECTS)
+    num_objects = _resolve_num_objects(config.get('num_objects', DEFAULT_NUM_OBJECTS_RANGE), rng)
     object_size_range = tuple(config.get('object_size_range', DEFAULT_OBJECT_SIZE_RANGE))
-    raw_size_range_2 = config.get('object_size_range_2')
-    object_size_range_2 = tuple(raw_size_range_2) if raw_size_range_2 is not None else None
     object_half_height = config.get('object_half_height', 0.3)
     goal_size = config.get('goal_size', 0.2)
     clearance_radius = config.get('clearance_radius', DEFAULT_CLEARANCE_RADIUS)
@@ -872,11 +878,10 @@ def generate_single_environment(
         print(f"[Env {env_id}] Error parsing template XML: {e}")
         return False
 
-    # Place obstacles (avoid robot's original position to prevent overlap)
+    print(f"[Env {env_id}] Target num_objects = {num_objects}")
     obstacles = place_obstacles(
         walls, bounds, num_objects, object_size_range, rng,
-        robot_pos=robot_original_pos, robot_size=robot_size,
-        object_size_range_2=object_size_range_2,
+        robot_pos=None, robot_size=robot_size,
     )
     print(f"[Env {env_id}] Placed {len(obstacles)} obstacles")
     
@@ -1007,10 +1012,8 @@ def generate_environments_from_pairs(
     rng = np.random.default_rng(seed)
 
     # Extract config
-    num_objects = config.get('num_objects', DEFAULT_NUM_OBJECTS)
+    num_objects = _resolve_num_objects(config.get('num_objects', DEFAULT_NUM_OBJECTS_RANGE), rng)
     object_size_range = tuple(config.get('object_size_range', DEFAULT_OBJECT_SIZE_RANGE))
-    raw_size_range_2 = config.get('object_size_range_2')
-    object_size_range_2 = tuple(raw_size_range_2) if raw_size_range_2 is not None else None
     object_half_height = config.get('object_half_height', 0.3)
     goal_size = config.get('goal_size', 0.2)
     clearance_radius = config.get('clearance_radius', DEFAULT_CLEARANCE_RADIUS)
@@ -1063,8 +1066,7 @@ def generate_environments_from_pairs(
 
         obstacles = place_obstacles(
             walls, bounds, num_objects, object_size_range, rng,
-            robot_pos=robot_original_pos, robot_size=robot_size,
-            object_size_range_2=object_size_range_2,
+            robot_pos=None, robot_size=robot_size,
         )
 
         add_obstacles_to_xml(worldbody, obstacles, object_half_height=object_half_height)
@@ -1191,19 +1193,30 @@ def generate_environments_parallel(
 ) -> None:
     """Generate multiple environments in parallel.
 
-    Creates a two-level output layout:
+    Creates a two- or three-level output layout:
       output_dir/
-        <template_base>/               <- directory named after template (no .xml)
-          run_0000/                    <- subdirectory for first job (passed to worker)
-          run_0001/                    <- subdirectory for second job
+        [<parent_dir>/]<template_base>/  <- prepended with parent dir name if present,
+                                            to disambiguate same-named templates living
+                                            in sibling folders (e.g. set1/benchmark_1.xml
+                                            vs set2/benchmark_1.xml).
+          run_0000/                       <- subdirectory for first job (passed to worker)
+          run_0001/                       <- subdirectory for second job
           ...
     Each worker calls generate_environments_from_pairs and writes one or more XMLs
     into its assigned run_<idx> subdirectory.
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    # Top-level subdir named after template base (filename without extension)
-    template_base = os.path.splitext(os.path.basename(template_xml_path))[0]
+    # Top-level subdir named after template parent + base (filename without extension).
+    # Including the parent dir name prevents output collisions when two templates share
+    # a basename across sibling folders.
+    norm_path = os.path.normpath(template_xml_path)
+    template_basename = os.path.splitext(os.path.basename(norm_path))[0]
+    template_parent = os.path.basename(os.path.dirname(norm_path))
+    if template_parent and template_parent not in (".", ""):
+        template_base = os.path.join(template_parent, template_basename)
+    else:
+        template_base = template_basename
     template_out_dir = os.path.join(output_dir, template_base)
     os.makedirs(template_out_dir, exist_ok=True)
 
@@ -1239,7 +1252,11 @@ def main():
     parser.add_argument('--start-seed', type=int, default=0, help='Starting random seed')
     
     # Environment parameters (override config file)
-    parser.add_argument('--num-objects', type=int, default=DEFAULT_NUM_OBJECTS)
+    parser.add_argument('--num-objects-range', type=int, nargs=2, metavar=('MIN', 'MAX'),
+                        default=None,
+                        help='Sample num_objects per env uniformly from [MIN, MAX] (inclusive). '
+                             'Sampling uses the per-env seeded RNG, so generation stays reproducible. '
+                             f'Defaults to {DEFAULT_NUM_OBJECTS_RANGE} when not provided.')
     # Use None as sentinel so we can distinguish "user didn't pass" from "user
     # explicitly passed the default value" — required for the --robot-scale
     # auto-override logic below to know whether to scale the default.
@@ -1257,15 +1274,10 @@ def main():
                              'car-friendly default of 0.035 is used.')
     parser.add_argument('--object-size-range', type=float, nargs=2, metavar=('MIN', 'MAX'),
                         default=None,
-                        help='(min, max) full side length for sampled obstacle boxes. '
+                        help='(min, max) full side length for sampled obstacle boxes. Width and '
+                             'height are drawn independently from this range, so aspect ratios '
+                             '(squares vs rectangles) emerge naturally from the random draws. '
                              'Overrides --robot-scale auto-scaling.')
-    parser.add_argument('--object-size-range-2', type=float, nargs=2, metavar=('MIN', 'MAX'),
-                        default=None,
-                        help='(min, max) full side length for the SECOND obstacle side, '
-                             'allowing rectangular obstacles with independent x/y dimensions. '
-                             'If omitted, both sides use --object-size-range (square-ish). '
-                             'With random yaw the side1/side2 mapping flips, so the obstacle '
-                             "AABB extents are still drawn from {side1, side2} regardless of orientation.")
     parser.add_argument('--goal-size', type=float, default=None,
                         help='Visual radius of the goal site sphere. Default 0.2 for original '
                              'point robot; auto-scaled by --robot-scale otherwise.')
@@ -1344,7 +1356,10 @@ def main():
         config = {}
     
     # Override with command line args
-    config['num_objects'] = args.num_objects
+    if args.num_objects_range is not None:
+        config['num_objects'] = list(args.num_objects_range)
+    elif 'num_objects' not in config:
+        config['num_objects'] = list(DEFAULT_NUM_OBJECTS_RANGE)
     config['clearance_radius'] = args.clearance_radius
     config['min_goal_distance'] = args.min_goal_distance
     config['max_goal_retries'] = args.max_goal_retries
@@ -1357,8 +1372,6 @@ def main():
         config['object_size_range'] = tuple(args.object_size_range)
     elif scaled_size_range is not None and 'object_size_range' not in config:
         config['object_size_range'] = scaled_size_range
-    if args.object_size_range_2 is not None:
-        config['object_size_range_2'] = tuple(args.object_size_range_2)
 
     # Generate environments
     generate_environments_parallel(
