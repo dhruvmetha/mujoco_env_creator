@@ -1,0 +1,27 @@
+# Any CLI option in template_generation_real.py may also be set here.
+# CLI values override YAML values.
+
+output_dir: generated_templates_real
+num_templates: 3
+points_per_side: 2
+start_seed: 0
+
+robot_config_yaml: ../tiny_robot_control/config/real.yaml
+wavefront_inflation_yaml: ../tiny_robot_control/config/wavefront_inflation.yaml
+inflation_context: navigation
+
+# Optional extra floor above the shared inflation-derived minimum.
+# The effective gap is max(required_from_inflation, min_gap_length_m).
+min_gap_length_m: 0.08
+
+# Optional. If omitted, the script uses max(0.057, min_gap_length_m / 2).
+# min_segment_length_m: 0.05
+
+corner_margin_m: 0.03
+
+# Fraction of logical inner walls to force straight.
+# Straight walls are axis-aligned using left-right and/or bottom-top pairings.
+straight_wall_fraction: 0.0
+straight_wall_mode: mixed
+
+max_layout_attempts: 200
