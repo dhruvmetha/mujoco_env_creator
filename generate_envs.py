@@ -11,6 +11,7 @@ This script:
 """
 
 import argparse
+import math
 import multiprocessing as mp
 import os
 import sys
@@ -241,6 +242,83 @@ def _template_lookup_key(template_xml_path: str) -> str:
     base = os.path.splitext(os.path.basename(norm))[0]
     return f"{parent}/{base}" if parent and parent not in (".", "") else base
 
+
+# Canonical diff-drive car body, matching the aug9_car templates. Injected by
+# parse_xml_template() when a template ships walls-only (i.e. no <body name="car">)
+# and the active namo config specifies robot_type: diff_drive.
+DIFF_DRIVE_CAR_BODY_XML = """<body name="car" pos="{x} {y} {z}">
+  <freejoint name="car_freejoint"/>
+  <inertial pos="0 0 0.0375" mass="0.35"
+            diaginertia="0.000266 0.000266 0.000286"/>
+  <geom name="front_chassis_collision" type="box"
+        pos="0.0175 0 0.0375" size="0.0175 0.035 0.0325"
+        rgba="0.3 0.3 0.7 1"/>
+  <geom name="rear_chassis_collision" type="box"
+        pos="-0.0175 0 0.0375" size="0.0175 0.035 0.0325"
+        rgba="0.25 0.25 0.6 1"/>
+  <geom name="front_marker" type="box"
+        pos="0.034 0 0.0505" size="0.002 0.015 0.01"
+        rgba="1 0.2 0.2 1" contype="0" conaffinity="0"/>
+  <body name="rear_support_body" pos="-0.03 0 0.0025">
+    <joint name="rear_caster_joint" type="ball" damping="0.0001"/>
+    <inertial pos="0 0 0" mass="0.025"
+              diaginertia="0.000001 0.000001 0.000001"/>
+    <geom name="rear_support" type="sphere" pos="0 0 0" size="0.0025"
+          friction="0 0 0" rgba="0.7 0.1 0.1 1"/>
+  </body>
+  <body name="front_support_body" pos="0.03 0 0.0025">
+    <joint name="front_caster_joint" type="ball" damping="0.0001"/>
+    <inertial pos="0 0 0" mass="0.025"
+              diaginertia="0.000001 0.000001 0.000001"/>
+    <geom name="front_support" type="sphere" pos="0 0 0" size="0.0025"
+          friction="0 0 0" rgba="0.1 0.7 0.1 1"/>
+  </body>
+  <body name="left_wheel" pos="0 0.0375 0.015">
+    <inertial pos="0 0 0" mass="0.05"
+              diaginertia="0.000003 0.000006 0.000003"/>
+    <joint name="left_wheel_joint" type="hinge" axis="0 1 0" damping="0.01" armature="0.0001"/>
+    <geom name="left_wheel_collision" type="cylinder"
+          size="0.015 0.0005" euler="90 0 0" rgba="0.1 0.1 0.1 1"/>
+  </body>
+  <body name="right_wheel" pos="0 -0.0375 0.015">
+    <inertial pos="0 0 0" mass="0.05"
+              diaginertia="0.000003 0.000006 0.000003"/>
+    <joint name="right_wheel_joint" type="hinge" axis="0 1 0" damping="0.01" armature="0.0001"/>
+    <geom name="right_wheel_collision" type="cylinder"
+          size="0.015 0.0005" euler="90 0 0" rgba="0.1 0.1 0.1 1"/>
+  </body>
+</body>"""
+
+DIFF_DRIVE_CAR_ACTUATOR_XML = """<actuator>
+  <velocity name="left_wheel_drive" joint="left_wheel_joint"
+            ctrlrange="-25 25" kv="0.75" forcerange="-0.5 0.5"/>
+  <velocity name="right_wheel_drive" joint="right_wheel_joint"
+            ctrlrange="-25 25" kv="0.75" forcerange="-0.5 0.5"/>
+</actuator>"""
+
+
+def _config_wants_diff_drive(namo_config_path: str) -> bool:
+    """Return True if the namo config specifies robot_type: diff_drive."""
+    try:
+        with open(namo_config_path, 'r') as f:
+            cfg = yaml.safe_load(f) or {}
+        return (cfg.get('planning') or {}).get('robot_type') == 'diff_drive'
+    except Exception:
+        return False
+
+
+def _inject_diff_drive_car(root: ET.Element, worldbody: ET.Element,
+                            default_x: float, default_y: float,
+                            default_z: float = 0.01) -> None:
+    """Add a diff-drive car body + wheel actuators to a walls-only template,
+    in-place. No-op if a car body or actuator block already exists."""
+    if worldbody.find(".//body[@name='car']") is None:
+        body_str = DIFF_DRIVE_CAR_BODY_XML.format(x=default_x, y=default_y, z=default_z)
+        worldbody.append(ET.fromstring(body_str))
+    if root.find('actuator') is None:
+        root.append(ET.fromstring(DIFF_DRIVE_CAR_ACTUATOR_XML))
+
+
 DEFAULT_CLEARANCE_RADIUS = 0.3  # meters
 DEFAULT_MIN_GOAL_DISTANCE = 1.0  # meters minimum separation between robot and goal
 DEFAULT_RESOLUTION = 0.01  # meters per grid cell
@@ -250,23 +328,30 @@ DEFAULT_MAX_GOAL_RETRIES = 10  # maximum retries for goal placement with clearan
 # ------------------------------------------------------------------
 # XML Parsing and Manipulation
 # ------------------------------------------------------------------
-def parse_xml_template(xml_path: str) -> Tuple[ET.ElementTree, Dict[str, Any]]:
+def parse_xml_template(xml_path: str, ensure_robot: Optional[str] = None) -> Tuple[ET.ElementTree, Dict[str, Any]]:
     """Parse XML template and extract environment information.
-    
+
+    Args:
+        xml_path: Path to the template XML.
+        ensure_robot: If 'car', inject a diff-drive car body into the template
+            when none is present. The injected car body is placed at the
+            arena center; the actual position is overwritten later when the
+            generator picks the robot pose. Other values are no-ops.
+
     Returns:
         (tree, info_dict) where info_dict contains walls, bounds, robot_elem, goal_elem
     """
     tree = ET.parse(xml_path)
     root = tree.getroot()
-    
+
     # Find worldbody
     worldbody = root.find('worldbody')
     if worldbody is None:
         raise ValueError("No worldbody found in XML")
-    
+
     # Find actuator section (may reference robot joints)
     actuator_section = root.find('actuator')
-    
+
     # Extract walls
     walls = []
     walls_body = worldbody.find(".//body[@name='walls']")
@@ -274,29 +359,54 @@ def parse_xml_template(xml_path: str) -> Tuple[ET.ElementTree, Dict[str, Any]]:
         for geom in walls_body.findall('geom'):
             pos_str = geom.get('pos', '0 0 0')
             size_str = geom.get('size', '0.1 0.1 0.1')
+            euler_str = geom.get('euler', '0 0 0')
             pos = [float(x) for x in pos_str.split()]
             size = [float(x) for x in size_str.split()]
-            walls.append({'pos': pos[:2], 'size': size[:2], 'elem': geom})
-    
-    # Compute bounds from walls
+            euler = [float(x) for x in euler_str.split()]
+            yaw_deg = euler[2] if len(euler) >= 3 else 0.0
+            # 'rotation' key is what check_collision() looks for via .get('rotation', 0).
+            # Storing it ensures rotated inner walls are treated correctly during SAT.
+            walls.append({'pos': pos[:2], 'size': size[:2],
+                          'rotation': yaw_deg, 'elem': geom})
+
+    # Compute arena bounds from walls using their ROTATED axis-aligned bbox.
+    # Using the unrotated pos±size over-reports the extent for rotated inner
+    # walls (a long-thin wall rotated 90° appears wider in unrotated x than it
+    # really is), which used to leak into place_obstacles as a sample range
+    # extending past the boundary walls.
     min_x, max_x = float('inf'), float('-inf')
     min_y, max_y = float('inf'), float('-inf')
-    
+
     for wall in walls:
         x, y = wall['pos']
         sx, sy = wall['size']
-        min_x = min(min_x, x - sx)
-        max_x = max(max_x, x + sx)
-        min_y = min(min_y, y - sy)
-        max_y = max(max_y, y + sy)
-    
+        ang = math.radians(wall.get('rotation', 0.0))
+        ca, sa = abs(math.cos(ang)), abs(math.sin(ang))
+        half_x = sx * ca + sy * sa
+        half_y = sx * sa + sy * ca
+        min_x = min(min_x, x - half_x)
+        max_x = max(max_x, x + half_x)
+        min_y = min(min_y, y - half_y)
+        max_y = max(max_y, y + half_y)
+
     bounds = (min_x, max_x, min_y, max_y)
-    
+
+    # If the template is walls-only (no robot body of any kind) and the caller
+    # requested a diff-drive injection, add the car body + wheel actuators now.
+    # Position is the arena center; the generator overwrites x/y later.
+    if ensure_robot == 'car' \
+       and worldbody.find(".//body[@name='robot']") is None \
+       and worldbody.find(".//body[@name='car']") is None:
+        cx = (min_x + max_x) / 2.0 if walls else 0.0
+        cy = (min_y + max_y) / 2.0 if walls else 0.0
+        _inject_diff_drive_car(root, worldbody, cx, cy)
+        actuator_section = root.find('actuator')  # refresh — may have just been added
+
     # Find robot and goal elements (but don't remove yet)
     robot_body = worldbody.find(".//body[@name='robot']")
     robot_geom = robot_body.find(".//geom[@name='robot']") if robot_body is not None else None
     goal_site = worldbody.find(".//site[@name='goal']")
-    
+
     # Store original robot position and size
     robot_size = 0.15  # default
     robot_original_pos = None  # (x, y) position from template
@@ -892,10 +1002,11 @@ def generate_single_environment(
     min_goal_distance = config.get('min_goal_distance', DEFAULT_MIN_GOAL_DISTANCE)
     resolution = config.get('resolution', DEFAULT_RESOLUTION)
     max_goal_retries = config.get('max_goal_retries', DEFAULT_MAX_GOAL_RETRIES)
+    ensure_robot = 'car' if _config_wants_diff_drive(namo_config_path) else None
 
     # Parse template XML
     try:
-        tree, info = parse_xml_template(template_xml_path)
+        tree, info = parse_xml_template(template_xml_path, ensure_robot=ensure_robot)
         walls = info['walls']
         bounds = info['bounds']
         worldbody = info['worldbody']
@@ -1051,10 +1162,11 @@ def generate_environments_from_pairs(
     samples_per_pair = int(config.get('samples_per_pair', 1))
     exact_hop = int(config.get('exact_hop', 0))
     min_region_area_m2 = float(config.get('min_region_area_m2', 0.0))
+    ensure_robot = 'car' if _config_wants_diff_drive(namo_config_path) else None
 
     # Parse template XML
     try:
-        tree, info = parse_xml_template(template_xml_path)
+        tree, info = parse_xml_template(template_xml_path, ensure_robot=ensure_robot)
         walls = info['walls']
         bounds = info['bounds']
         worldbody = info['worldbody']
@@ -1082,7 +1194,7 @@ def generate_environments_from_pairs(
     for layout_try in range(MAX_LAYOUT_TRIES):
         # Re-parse the template so previous-try obstacles don't accumulate.
         try:
-            tree, info = parse_xml_template(template_xml_path)
+            tree, info = parse_xml_template(template_xml_path, ensure_robot=ensure_robot)
             walls = info['walls']
             bounds = info['bounds']
             worldbody = info['worldbody']

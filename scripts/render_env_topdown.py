@@ -31,8 +31,11 @@ def parse_env(xml_path):
     for g in root.findall(".//body[@name='walls']/geom"):
         pos = _parse_floats(g.get('pos', '0 0 0'), 3)
         size = _parse_floats(g.get('size', '0 0 0'), 3)
+        euler = _parse_floats(g.get('euler', '0 0 0'), 3)
+        yaw_deg = euler[2] if len(euler) >= 3 else 0.0
         walls.append({'cx': pos[0], 'cy': pos[1],
-                      'w': 2 * size[0], 'h': 2 * size[1]})
+                      'w': 2 * size[0], 'h': 2 * size[1],
+                      'yaw': yaw_deg})
 
     obstacles = []
     for body in root.findall(".//body"):
@@ -101,12 +104,16 @@ def render(xml_path, out_path, inches=None, dpi=120, pad_frac=0.02):
     fig, ax = plt.subplots(figsize=(in_w, in_h), dpi=dpi)
     ax.set_facecolor('#e8e8e8')
 
-    # Walls
+    # Walls (rotated around their own center)
     for w in walls:
-        ax.add_patch(Rectangle(
-            (w['cx'] - w['w']/2, w['cy'] - w['h']/2),
-            w['w'], w['h'],
-            facecolor='#444444', edgecolor='none', zorder=2))
+        rect = Rectangle(
+            (-w['w']/2, -w['h']/2), w['w'], w['h'],
+            facecolor='#444444', edgecolor='none', zorder=2)
+        t = matplotlib.transforms.Affine2D() \
+            .rotate_deg(w.get('yaw', 0.0)) \
+            .translate(w['cx'], w['cy']) + ax.transData
+        rect.set_transform(t)
+        ax.add_patch(rect)
 
     # Obstacles (yellow, rotated)
     for o in obstacles:
