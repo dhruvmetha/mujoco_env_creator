@@ -1,0 +1,31 @@
+<?xml version="1.0" ?>
+<mujoco model="generated_real_template">
+  <compiler angle="degree"/>
+  <option timestep="0.002" integrator="implicitfast" iterations="100" cone="elliptic"/>
+  <default>
+    <geom density="1"/>
+  </default>
+  <asset>
+    <texture builtin="gradient" height="3072" rgb1="0.3 0.5 0.7" rgb2="0 0 0" type="skybox" width="512"/>
+    <texture builtin="checker" height="300" mark="edge" markrgb="0.8 0.8 0.8" name="groundplane" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" type="2d" width="300"/>
+    <material name="groundplane" reflectance="0.2" texrepeat="5 5" texture="groundplane" texuniform="true"/>
+  </asset>
+  <worldbody>
+    <light dir="0 0 -1" directional="true" pos="0 0 1.5"/>
+    <geom name="floor" type="plane" condim="4" friction="0.5 0.005 0.001" material="groundplane" size="0 0 0.05"/>
+    <body name="walls">
+      <geom name="wall_boundary_left" type="box" condim="4" friction="1.0 0.005 0.0001" rgba="0.8 0.8 0.8 1" pos="-0.010000 0.387500 0.050000" euler="0 0 0.000000" size="0.010000 0.407500 0.050000"/>
+      <geom name="wall_boundary_right" type="box" condim="4" friction="1.0 0.005 0.0001" rgba="0.8 0.8 0.8 1" pos="0.500000 0.387500 0.050000" euler="0 0 0.000000" size="0.010000 0.407500 0.050000"/>
+      <geom name="wall_boundary_bottom" type="box" condim="4" friction="1.0 0.005 0.0001" rgba="0.8 0.8 0.8 1" pos="0.245000 -0.010000 0.050000" euler="0 0 0.000000" size="0.245000 0.010000 0.050000"/>
+      <geom name="wall_boundary_top" type="box" condim="4" friction="1.0 0.005 0.0001" rgba="0.8 0.8 0.8 1" pos="0.245000 0.785000 0.050000" euler="0 0 0.000000" size="0.245000 0.010000 0.050000"/>
+      <geom name="wall_inner_1_1" type="box" condim="4" friction="1.0 0.005 0.0001" rgba="0.8 0.8 0.8 1" pos="0.292319 0.735088 0.050000" euler="0 0 -61.286687" size="0.045508 0.028500 0.050000"/>
+      <geom name="wall_inner_1_2" type="box" condim="4" friction="1.0 0.005 0.0001" rgba="0.8 0.8 0.8 1" pos="0.473976 0.403468 0.050000" euler="0 0 -61.286687" size="0.022954 0.028500 0.050000"/>
+      <geom name="wall_inner_2_1" type="box" condim="4" friction="1.0 0.005 0.0001" rgba="0.8 0.8 0.8 1" pos="0.173208 0.766777 0.050000" euler="0 0 -156.655127" size="0.005186 0.028500 0.050000"/>
+      <geom name="wall_inner_2_2" type="box" condim="4" friction="1.0 0.005 0.0001" rgba="0.8 0.8 0.8 1" pos="0.019588 0.700475 0.050000" euler="0 0 -156.655127" size="0.021334 0.028500 0.050000"/>
+      <geom name="wall_inner_3_1" type="box" condim="4" friction="1.0 0.005 0.0001" rgba="0.8 0.8 0.8 1" pos="0.172261 0.000814 0.050000" euler="0 0 127.952694" size="0.001033 0.028500 0.050000"/>
+      <geom name="wall_inner_3_2" type="box" condim="4" friction="1.0 0.005 0.0001" rgba="0.8 0.8 0.8 1" pos="0.003048 0.217766 0.050000" euler="0 0 127.952694" size="0.000934 0.028500 0.050000"/>
+      <geom name="wall_inner_4_1" type="box" condim="4" friction="1.0 0.005 0.0001" rgba="0.8 0.8 0.8 1" pos="0.470095 0.264559 0.050000" euler="0 0 -102.579586" size="0.055503 0.028500 0.050000"/>
+      <geom name="wall_inner_4_2" type="box" condim="4" friction="1.0 0.005 0.0001" rgba="0.8 0.8 0.8 1" pos="0.414795 0.016747 0.050000" euler="0 0 -102.579586" size="0.017159 0.028500 0.050000"/>
+    </body>
+  </worldbody>
+</mujoco>

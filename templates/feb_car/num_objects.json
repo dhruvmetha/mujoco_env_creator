@@ -1,0 +1,1691 @@
+{
+  "_comment": "Per-template num_objects [min, max] for feb_car. Keys are '<bucket>/<basename>'. All set to [1, 4].",
+  "straight0_pts2/real_template_pts2_seed03000": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03001": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03002": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03003": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03004": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03005": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03006": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03007": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03008": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03009": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03010": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03011": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03012": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03013": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03014": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03015": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03016": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03017": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03018": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03019": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03020": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03021": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03022": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03023": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03024": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03025": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03026": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03027": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03028": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03029": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03030": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03031": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03032": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03033": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03034": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03035": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03036": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03037": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03038": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03039": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03040": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03041": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03042": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03043": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03044": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03045": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03046": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03047": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03048": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03049": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03050": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03051": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03052": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03053": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03054": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03055": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03056": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03057": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03058": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03059": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03060": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03061": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03062": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03063": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03064": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03065": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03066": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03067": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03068": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed03069": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07000": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07001": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07002": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07003": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07004": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07005": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07006": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07007": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07008": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07009": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07010": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07011": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07012": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07013": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07014": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07015": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07016": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07017": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07018": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07019": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07020": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07021": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07022": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07023": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07024": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07025": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07026": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07027": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07028": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07029": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07030": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07031": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07032": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07033": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07034": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07035": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07036": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07037": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07038": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07039": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07040": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07041": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07042": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07043": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07044": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07045": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07046": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07047": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07048": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07049": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07050": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07051": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07052": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07053": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07054": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07055": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07056": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07057": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07058": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07059": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07060": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07061": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07062": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07063": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07064": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07065": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07066": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07067": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07068": [
+    1,
+    4
+  ],
+  "straight0_pts2/real_template_pts2_seed07069": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed00600": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed00601": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01000": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01001": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01002": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01003": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01004": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01005": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01006": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01007": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01008": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01009": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01010": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01011": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01012": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01013": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01014": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01015": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01016": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01017": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01018": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01019": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01020": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01021": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01022": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01023": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01024": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01025": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01026": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01027": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01028": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01029": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01030": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01031": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01032": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01033": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01034": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01035": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01036": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01037": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01038": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01039": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01040": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01041": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01042": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01043": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01044": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01045": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01046": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01047": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01048": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01049": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01050": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01051": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01052": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01053": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01054": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01055": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01056": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01057": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01058": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01059": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01060": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01061": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01062": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01063": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01064": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01065": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01066": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01067": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01068": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed01069": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07200": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07201": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07202": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07203": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07204": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07205": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07206": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07207": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07208": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07209": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07210": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07211": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07212": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07213": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07214": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07215": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07216": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07217": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07218": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07219": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07220": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07221": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07222": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07223": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07224": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07225": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07226": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07227": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07228": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07229": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07230": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07231": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07232": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07233": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07234": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07235": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07236": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07237": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07238": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07239": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07240": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07241": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07242": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07243": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07244": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07245": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07246": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07247": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07248": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07249": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07250": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07251": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07252": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07253": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07254": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07255": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07256": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07257": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07258": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07259": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07260": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07261": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07262": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07263": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07264": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07265": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07266": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07267": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07268": [
+    1,
+    4
+  ],
+  "straight100_pts2/real_template_pts2_seed07269": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02000": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02001": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02002": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02003": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02004": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02005": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02006": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02007": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02008": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02009": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02010": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02011": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02012": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02013": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02014": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02015": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02016": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02017": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02018": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02019": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02020": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02021": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02022": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02023": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02024": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02025": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02026": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02027": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02028": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02029": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02030": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02031": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02032": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02033": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02034": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02035": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02036": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02037": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02038": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02039": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02040": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02041": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02042": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02043": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02044": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02045": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02046": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02047": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02048": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02049": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02050": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02051": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02052": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02053": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02054": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02055": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02056": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02057": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02058": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02059": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02060": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02061": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02062": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02063": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02064": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02065": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02066": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02067": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02068": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed02069": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07100": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07101": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07102": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07103": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07104": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07105": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07106": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07107": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07108": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07109": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07110": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07111": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07112": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07113": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07114": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07115": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07116": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07117": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07118": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07119": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07120": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07121": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07122": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07123": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07124": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07125": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07126": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07127": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07128": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07129": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07130": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07131": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07132": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07133": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07134": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07135": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07136": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07137": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07138": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07139": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07140": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07141": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07142": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07143": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07144": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07145": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07146": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07147": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07148": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07149": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07150": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07151": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07152": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07153": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07154": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07155": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07156": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07157": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07158": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07159": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07160": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07161": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07162": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07163": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07164": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07165": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07166": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07167": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07168": [
+    1,
+    4
+  ],
+  "straight50_pts2/real_template_pts2_seed07169": [
+    1,
+    4
+  ]
+}

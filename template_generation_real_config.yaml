@@ -1,7 +1,7 @@
 # Any CLI option in template_generation_real.py may also be set here.
 # CLI values override YAML values.
 
-output_dir: generated_templates_real
+output_dir: templates/feb_car
 num_templates: 3
 points_per_side: 2
 start_seed: 0

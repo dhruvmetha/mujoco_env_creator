@@ -28,7 +28,7 @@ DEFAULT_REAL_CONFIG_YAML = REPO_ROOT / "tiny_robot_control" / "config" / "real.y
 DEFAULT_WAVEFRONT_INFLATION_YAML = (
     REPO_ROOT / "tiny_robot_control" / "config" / "wavefront_inflation.yaml"
 )
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "generated_templates_real"
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "templates" / "feb_car"
 
 
 # Fixed physical workspace. These are not configurable.
