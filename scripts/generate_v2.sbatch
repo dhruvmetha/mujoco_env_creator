@@ -7,11 +7,11 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=64G
-#SBATCH --array=0-3
+#SBATCH --array=0-31
 
-# Total: 4 array tasks x 32 cpus = 128 cpus of parallelism.
-# Joblist lines are assigned round-robin (NR % 4 == task_id) so aug9 chunks
-# (heavier) and feb chunks (lighter) are spread evenly across all 4 tasks.
+# Total: 32 array tasks x 32 cpus = 1024 cpus of parallelism.
+# Joblist lines are assigned round-robin (NR % 32 == task_id) so aug9 sub-chunks
+# (heavier) and feb chunks (lighter) are spread evenly across all 32 tasks.
 #
 # Restart a failed shard:    sbatch --array=2 scripts/generate_v2.sbatch
 # Track progress:            tail -f .../slurm_logs/gen_v2_<jobid>_<taskid>.out
@@ -20,7 +20,7 @@ set -euo pipefail
 
 REPO=/common/home/dm1487/robotics_research/ktamp/mujoco_env_creator
 JOBLIST=$REPO/scripts/v2_joblist.txt
-NUM_TASKS=4
+NUM_TASKS=32
 TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
 PARALLEL=${SLURM_CPUS_PER_TASK:-32}
 

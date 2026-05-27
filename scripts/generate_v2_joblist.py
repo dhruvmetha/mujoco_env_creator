@@ -26,11 +26,13 @@ FEB_TEMPLATES_DIR = REPO / "templates" / "feb_car"
 # Per-template env budgets
 AUG9_ENVS_PER_TEMPLATE = 30000
 AUG9_ENVS_PER_CHUNK = 5000   # => 6 chunks per template
+AUG9_ENVS_PER_SUBCHUNK = 1000  # => 5 sub-chunks per chunk, for finer xargs parallelism
 FEB_ENVS_PER_TEMPLATE = 1660
 
 AUG9_SEED_BASE = 200_000
 AUG9_TEMPLATE_STRIDE = 1_000_000
 AUG9_CHUNK_STRIDE = 10_000
+AUG9_SUBCHUNK_STRIDE = 2_000   # 5 subs * 2000 = 10000 fits AUG9_CHUNK_STRIDE exactly
 
 FEB_SEED_BASE = 100_000_000
 FEB_TEMPLATE_STRIDE = 10_000
@@ -90,14 +92,18 @@ def main():
     aug9_out = f"{OUTPUT_ROOT}/aug9_car"
     aug9_json = str(AUG9_TEMPLATES_DIR / "num_objects.json")
     aug9_chunks = AUG9_ENVS_PER_TEMPLATE // AUG9_ENVS_PER_CHUNK
+    aug9_subchunks = AUG9_ENVS_PER_CHUNK // AUG9_ENVS_PER_SUBCHUNK
     for t_idx, xml in enumerate(aug9_templates()):
         for chunk in range(aug9_chunks):
-            seed = AUG9_SEED_BASE + t_idx * AUG9_TEMPLATE_STRIDE + chunk * AUG9_CHUNK_STRIDE
-            offset = chunk * AUG9_ENVS_PER_CHUNK
-            lines.append(emit_command(
-                str(xml), AUG9_ENVS_PER_CHUNK, seed, offset, aug9_out, aug9_json,
-                AUG9_SIZING,
-            ))
+            chunk_seed_base = AUG9_SEED_BASE + t_idx * AUG9_TEMPLATE_STRIDE + chunk * AUG9_CHUNK_STRIDE
+            chunk_offset_base = chunk * AUG9_ENVS_PER_CHUNK
+            for sub in range(aug9_subchunks):
+                seed = chunk_seed_base + sub * AUG9_SUBCHUNK_STRIDE
+                offset = chunk_offset_base + sub * AUG9_ENVS_PER_SUBCHUNK
+                lines.append(emit_command(
+                    str(xml), AUG9_ENVS_PER_SUBCHUNK, seed, offset, aug9_out, aug9_json,
+                    AUG9_SIZING,
+                ))
 
     # feb_car
     feb_out = f"{OUTPUT_ROOT}/feb_car"
@@ -111,14 +117,14 @@ def main():
 
     out_path = REPO / "scripts" / "v2_joblist.txt"
     out_path.write_text("\n".join(lines) + "\n")
-    aug_count = len(aug9_templates()) * aug9_chunks
+    aug_count = len(aug9_templates()) * aug9_chunks * aug9_subchunks
     feb_count = len(feb_templates())
     total_envs = (
         len(aug9_templates()) * AUG9_ENVS_PER_TEMPLATE
         + len(feb_templates()) * FEB_ENVS_PER_TEMPLATE
     )
     print(f"wrote {out_path}")
-    print(f"  aug9 jobs: {aug_count} ({len(aug9_templates())} templates x {aug9_chunks} chunks x {AUG9_ENVS_PER_CHUNK} envs)")
+    print(f"  aug9 jobs: {aug_count} ({len(aug9_templates())} templates x {aug9_chunks} chunks x {aug9_subchunks} subs x {AUG9_ENVS_PER_SUBCHUNK} envs)")
     print(f"  feb  jobs: {feb_count} ({len(feb_templates())} templates x 1 chunk x {FEB_ENVS_PER_TEMPLATE} envs)")
     print(f"  total jobs: {len(lines)}")
     print(f"  total envs: {total_envs}")
