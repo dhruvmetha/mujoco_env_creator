@@ -273,14 +273,14 @@ DIFF_DRIVE_CAR_BODY_XML = """<body name="car" pos="{x} {y} {z}">
     <geom name="front_support" type="sphere" pos="0 0 0" size="0.0025"
           friction="0 0 0" rgba="0.1 0.7 0.1 1"/>
   </body>
-  <body name="left_wheel" pos="0 0.0375 0.015">
+  <body name="left_wheel" pos="0 0.034 0.015">
     <inertial pos="0 0 0" mass="0.05"
               diaginertia="0.000003 0.000006 0.000003"/>
     <joint name="left_wheel_joint" type="hinge" axis="0 1 0" damping="0.01" armature="0.0001"/>
     <geom name="left_wheel_collision" type="cylinder"
           size="0.015 0.0005" euler="90 0 0" rgba="0.1 0.1 0.1 1"/>
   </body>
-  <body name="right_wheel" pos="0 -0.0375 0.015">
+  <body name="right_wheel" pos="0 -0.034 0.015">
     <inertial pos="0 0 0" mass="0.05"
               diaginertia="0.000003 0.000006 0.000003"/>
     <joint name="right_wheel_joint" type="hinge" axis="0 1 0" damping="0.01" armature="0.0001"/>
@@ -295,6 +295,14 @@ DIFF_DRIVE_CAR_ACTUATOR_XML = """<actuator>
   <velocity name="right_wheel_drive" joint="right_wheel_joint"
             ctrlrange="-25 25" kv="0.75" forcerange="-0.5 0.5"/>
 </actuator>"""
+
+# Wheels sit inside the chassis Y-footprint (wheel_center_y=0.034, outer face
+# 0.0345 <= chassis edge 0.035), so each wheel cylinder overlaps the chassis box.
+# Exclude those two pairs to suppress the spurious chassis<->wheel contacts.
+DIFF_DRIVE_CAR_CONTACT_XML = """<contact>
+  <exclude body1="car" body2="left_wheel"/>
+  <exclude body1="car" body2="right_wheel"/>
+</contact>"""
 
 
 def _config_wants_diff_drive(namo_config_path: str) -> bool:
@@ -315,6 +323,11 @@ def _inject_diff_drive_car(root: ET.Element, worldbody: ET.Element,
     if worldbody.find(".//body[@name='car']") is None:
         body_str = DIFF_DRIVE_CAR_BODY_XML.format(x=default_x, y=default_y, z=default_z)
         worldbody.append(ET.fromstring(body_str))
+        # Wheels overlap the chassis box (inside the Y-footprint), so exclude
+        # the chassis<->wheel contact pairs. Gated on the same car-injection
+        # condition so we don't add a dangling <contact> to non-car templates.
+        if root.find('contact') is None:
+            root.append(ET.fromstring(DIFF_DRIVE_CAR_CONTACT_XML))
     if root.find('actuator') is None:
         root.append(ET.fromstring(DIFF_DRIVE_CAR_ACTUATOR_XML))
 
