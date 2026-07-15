@@ -194,28 +194,70 @@ def _adjacency_bfs_distance(adjacency: Dict[str, Set[str]], src: str, tgt: str) 
     return -1
 
 
-def _runtime_validate_adjacency(exporter, robot_pos, goal_pos, exact_hop: int = 1, debug: bool = False):
-    """Re-run the wavefront with the candidate robot/goal poses so the
-    'clear cells around robot' step is applied exactly as the planner sees it.
+def _runtime_validate_adjacency(env, robot_pos, goal_pos, exact_hop: int = 1,
+                                goal_radius: Optional[float] = None,
+                                seed: int = 42, debug: bool = False):
+    """Re-check a candidate (robot, goal) placement against the LABELER's live
+    wavefront snapshot, so gen-time "1-hop" agrees with the region_opening
+    labeler and scenes stop getting dropped as `goal_region_not_in_snapshot`.
 
-    Accept only if the planner-view snapshot yields distinct robot/goal regions
-    whose BFS distance in the adjacency graph equals exact_hop. Rejects:
-      - 'robot_goal' label  → robot already in goal region (no opening needed)
-      - Hop distance != exact_hop
+    Uses the EXACT snapshot entry the labeler uses
+    (`namo.planners.get_region_snapshot`, see region_opening.py `_explore_from_state`):
+    the candidate robot+goal are placed on the live env, the same C++ unified
+    wavefront + local region restriction is run, and the placement is accepted iff:
+      - a robot region is found,
+      - the robot is NOT already in the goal region (`robot_goal` / `goal` label),
+      - a distinct `goal` region is present in the (locally restricted) snapshot, and
+      - BFS hop(robot_region → goal_region) in the adjacency graph == exact_hop.
+
+    The labeler resolves the goal via `use_xml_goal=True` (reads the XML goal
+    site). At gen time the candidate goal is not yet written to the env's XML, so
+    we place it with `env.set_robot_goal(...)` and call the snapshot with
+    `use_xml_goal=False`; both paths reduce to the identical `goal_xy` fed to
+    `build_goal_cells` (rl_env.cpp), so the region determination is identical.
+    `goal_radius=None` reproduces the labeler default (C++ `compute_goal_tolerance_m`).
+    Robot theta is 0 to match `update_robot_xy_in_xml` (which sets pos only).
+
+    Local restriction is applied for the 1-hop case (matching the labeler); for
+    exact_hop>1 (multi-hop chains, no rung-1 labeler equivalent) the full graph
+    is used so the BFS can span intermediate regions.
+
+    Returns (accept: bool, reason: str).
     """
-    # NOTE: namo's WavefrontSnapshotExporter dropped `from_geometry` and
-    # `_preset_movables` during the env-driven refactor. The previous re-run
-    # path (build a fresh exporter from the same static/movable geometry but
-    # with a candidate robot/goal pose) no longer exists. Rebuilding via a
-    # per-pair namo_rl env would cost ~100 ms per sample which is too slow
-    # for samples_per_pair × pair count. Skipping for now: gen-time adjacency
-    # BFS already enforces exact_hop on the static region graph; we only lose
-    # the "robot/goal placement collapses the regions" rejection (the rare
-    # case where the planner's clear-cells-around-robot step erodes a barely
-    # blocking obstacle). For corridors with strict-block sizing this is a
-    # near-no-op. Re-enable by reconstructing via env + set_full_state if
-    # data quality demands it.
-    return True
+    from namo.planners import get_region_snapshot as _get_region_snapshot
+
+    rx, ry = float(robot_pos[0]), float(robot_pos[1])
+    gx, gy = float(goal_pos[0]), float(goal_pos[1])
+
+    # Place candidate robot + goal on the live env (obstacles already loaded).
+    env.set_robot_pose(rx, ry, 0.0)
+    env.set_robot_goal(gx, gy, 0.0)
+
+    local_only = (exact_hop <= 1)
+    snapshot = _get_region_snapshot(
+        env,
+        goals_per_region=0,        # does not affect adjacency/region_labels/robot_label
+        goal_radius=goal_radius,   # None -> C++ compute_goal_tolerance_m (labeler default)
+        local_info_only=local_only,
+        seed=seed,
+        use_cpp_unified=True,
+        use_xml_goal=False,        # use the goal we just set, not the template XML site
+    )
+    adjacency = snapshot["adjacency"]
+    region_label_values = set(snapshot["region_labels"].values())
+    robot_label = snapshot.get("robot_label") or ""
+
+    if not robot_label:
+        return False, "no_robot_region"
+    # 'robot_goal' (robot region already contains the goal) or (defensively) 'goal'.
+    if "goal" in robot_label:
+        return False, "robot_already_in_goal_region"
+    if "goal" not in region_label_values:
+        return False, "goal_region_not_in_snapshot"
+    hop = _adjacency_bfs_distance(adjacency, robot_label, "goal")
+    if hop != exact_hop:
+        return False, f"hop_{hop}_ne_{exact_hop}"
+    return True, "accepted"
 
 
 # ------------------------------------------------------------------
@@ -850,6 +892,9 @@ def place_robot_and_goal_pairs(
     region_goals: Optional[Dict[str, Any]] = None,
     min_region_area_m2: float = 0.0,
     arena_bounds: Optional[Tuple[float, float, float, float]] = None,
+    runtime_validate: bool = True,
+    runtime_goal_radius: Optional[float] = None,
+    runtime_seed: int = 42,
 ) -> List[Tuple[Tuple[float, float], Tuple[float, float]]]:
     """For every connected component, generate a placement for every unordered pair
     of distinct regions (n choose 2). Returns a list of (robot_pos, goal_pos) pairs.
@@ -862,6 +907,20 @@ def place_robot_and_goal_pairs(
     the wavefront grid extending past the arena into "outside" free space.
     """
     placements: List[Tuple[Tuple[float, float], Tuple[float, float]]] = []
+
+    # Runtime (labeler-view) adjacency re-check. The gen-time static adjacency
+    # graph answers "would these two regions connect if this object vanished",
+    # computed on obstacles-only geometry; the region_opening LABELER instead
+    # runs a real wavefront BFS with the candidate robot/goal PLACED (+inflation)
+    # and drops any scene whose goal region is not a 1-hop neighbour
+    # (`goal_region_not_in_snapshot`). Re-check each accepted placement against
+    # that same live snapshot so the two stay in sync.
+    _val_env = getattr(exporter, "_env", None)
+    _hop_constraint_active = (exact_hop > 0) or require_adjacent
+    _do_runtime_validate = bool(runtime_validate) and (_val_env is not None) and _hop_constraint_active
+    _hop_target = exact_hop if exact_hop > 0 else 1
+    val_stats = {"attempted": 0, "accepted": 0, "rejected": 0,
+                 "reasons": {}, "time_s": 0.0}
 
     def _in_arena(pos):
         if arena_bounds is None:
@@ -962,6 +1021,29 @@ def place_robot_and_goal_pairs(
                 distance = np.hypot(goal_pos[0] - robot_pos[0], goal_pos[1] - robot_pos[1])
                 if distance < min_goal_distance:
                     continue
+                # Re-check against the labeler's live wavefront snapshot before
+                # accepting. Rejects placements the labeler would drop (e.g. goal
+                # not actually a 1-hop neighbour once robot/goal are placed +
+                # inflated) — the fix that keeps gen-time "1-hop" in sync.
+                if _do_runtime_validate:
+                    import time as _time
+                    _t0 = _time.perf_counter()
+                    ok, reason = _runtime_validate_adjacency(
+                        _val_env, robot_pos, goal_pos,
+                        exact_hop=_hop_target,
+                        goal_radius=runtime_goal_radius,
+                        seed=runtime_seed,
+                    )
+                    val_stats["time_s"] += _time.perf_counter() - _t0
+                    val_stats["attempted"] += 1
+                    val_stats["reasons"][reason] = val_stats["reasons"].get(reason, 0) + 1
+                    if not ok:
+                        val_stats["rejected"] += 1
+                        if debug:
+                            print(f"  [DEBUG] Runtime-rejected {src_region}->{tgt_region} "
+                                  f"(reason={reason})")
+                        continue
+                    val_stats["accepted"] += 1
                 placements.append((robot_pos, goal_pos))
                 successes += 1
                 if debug:
@@ -993,6 +1075,13 @@ def place_robot_and_goal_pairs(
             if not (ok1 or ok2) and debug:
                 print(f"  [DEBUG] Could not generate placement for region pair ({ri},{rj}) after {max_goal_retries} attempts per ordering")
 
+    if _do_runtime_validate and val_stats["attempted"] > 0:
+        n = val_stats["attempted"]
+        acc = val_stats["accepted"]
+        ms = 1000.0 * val_stats["time_s"] / n
+        print(f"  [runtime-validate] attempted={n} accepted={acc} "
+              f"rejected={val_stats['rejected']} "
+              f"({100.0*acc/n:.1f}% kept) avg={ms:.1f}ms/sample reasons={val_stats['reasons']}")
     if debug:
         print(f"  [DEBUG] Generated {len(placements)} placements in total")
     return placements
@@ -1196,6 +1285,7 @@ def generate_environments_from_pairs(
     samples_per_pair = int(config.get('samples_per_pair', 1))
     exact_hop = int(config.get('exact_hop', 0))
     min_region_area_m2 = float(config.get('min_region_area_m2', 0.0))
+    runtime_validate = bool(config.get('runtime_validate_adjacency', True))
     ensure_robot = 'car' if _config_wants_diff_drive(namo_config_path) else None
 
     # Parse template XML
@@ -1294,6 +1384,7 @@ def generate_environments_from_pairs(
                 # any sampled robot/goal position outside, so goals can't land in
                 # the "outside-arena" free space that the wavefront grid extends into.
                 arena_bounds=bounds,
+                runtime_validate=runtime_validate,
             )
         except Exception as e:
             print(f"[Env {env_id}] try {layout_try+1}: pair error: {e}")
@@ -1499,6 +1590,14 @@ def main():
                              'footprint). Set 0 to disable. Larger values like 0.05 (~22x22cm) '
                              'force "real-room" regions but trigger more layout retries on '
                              'small arenas.')
+    parser.add_argument('--runtime-validate', action='store_true', default=True,
+                        help='Re-check each accepted (robot, goal) placement against the '
+                             'region_opening labeler\'s live wavefront snapshot (robot+goal '
+                             'placed + inflation) so gen-time "1-hop" agrees with the labeler. '
+                             'On by default. Disable with --no-runtime-validate.')
+    parser.add_argument('--no-runtime-validate', action='store_false', dest='runtime_validate',
+                        help='Skip the labeler-view adjacency re-check (legacy behaviour: keep '
+                             'placements that pass only the idealized static-adjacency test).')
 
     args = parser.parse_args()
 
@@ -1588,6 +1687,7 @@ def main():
     config['samples_per_pair'] = args.samples_per_pair
     config['exact_hop'] = args.exact_hop
     config['min_region_area_m2'] = args.min_region_area
+    config['runtime_validate_adjacency'] = args.runtime_validate
     if args.object_size_range is not None:
         config['object_size_range'] = tuple(args.object_size_range)
     elif scaled_size_range is not None and 'object_size_range' not in config:
